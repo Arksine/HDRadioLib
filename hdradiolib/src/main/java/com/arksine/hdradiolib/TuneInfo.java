@@ -29,7 +29,7 @@ public class TuneInfo implements Parcelable {
                 }
             };
 
-    TuneInfo(RadioBand band, int freq, int subchannel ) {
+    public TuneInfo(RadioBand band, int freq, int subchannel ) {
         this.mBand = band;
         this.mFrequency = freq;
         this.mSubChannel = subchannel;

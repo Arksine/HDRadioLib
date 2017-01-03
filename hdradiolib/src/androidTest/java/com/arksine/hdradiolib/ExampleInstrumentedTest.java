@@ -4,6 +4,9 @@ import android.content.Context;
 import android.support.test.InstrumentationRegistry;
 import android.support.test.runner.AndroidJUnit4;
 
+import com.arksine.hdradiolib.enums.RadioCommand;
+import com.arksine.hdradiolib.enums.RadioError;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -22,5 +25,46 @@ public class ExampleInstrumentedTest {
         Context appContext = InstrumentationRegistry.getTargetContext();
 
         assertEquals("com.arksine.hdradio.test", appContext.getPackageName());
+    }
+
+    @Test
+    public void instantiateHDRadio() throws Exception {
+        Context appContext = InstrumentationRegistry.getTargetContext();
+
+        HDRadioCallbacks cbs = new HDRadioCallbacks() {
+            @Override
+            public void onOpened(boolean openSuccess, RadioController controller) {
+
+            }
+
+            @Override
+            public void onClosed() {
+
+            }
+
+            @Override
+            public void onDeviceError(RadioError error) {
+
+            }
+
+            @Override
+            public void onRadioPowerOn() {
+
+            }
+
+            @Override
+            public void onRadioPowerOff() {
+
+            }
+
+            @Override
+            public void onRadioDataReceived(RadioCommand key, Object value) {
+
+            }
+        };
+
+        HDRadio hdRadio = new HDRadio(appContext, cbs);
+
+        assertEquals("com.arksine.hdradiolib.test", appContext.getPackageName());
     }
 }
