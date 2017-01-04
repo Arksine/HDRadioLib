@@ -306,6 +306,16 @@ public class HDRadio {
         }
 
         @Override
+        public void setHdSubChannel(final int subChannel) {
+            HDRadio.this.mControlHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    HDRadio.this.sendRadioCommand(RadioCommand.HD_SUBCHANNEL, RadioOperation.SET, subChannel);
+                }
+            });
+        }
+
+        @Override
         public void seekUp() {
             HDRadio.this.mControlHandler.post(new Runnable() {
                 @Override

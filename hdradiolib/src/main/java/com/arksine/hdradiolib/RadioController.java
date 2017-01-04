@@ -34,6 +34,8 @@ public interface RadioController {
     void tuneUp();
     void tuneDown();
 
+    void setHdSubChannel(final int subChannel);
+
     void seekUp();
     void seekDown();
 
