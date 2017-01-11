@@ -7,14 +7,16 @@ import com.arksine.hdradiolib.enums.RadioBand;
 
 /**
  * Class container for tune information.  Implements Parcelable so it can be
- * sent via Android intents and AIDL
+ * sent via Android intents and AIDL.
+ *
+ * The subchannel is the only field that may be changed after instantiation.
  */
 
 public class TuneInfo implements Parcelable {
 
     private final RadioBand mBand;
     private final int mFrequency;
-    private final int mSubChannel;
+    private int mSubChannel;
 
     public static final Parcelable.Creator<TuneInfo> CREATOR =
             new Parcelable.Creator<TuneInfo>() {
@@ -55,6 +57,10 @@ public class TuneInfo implements Parcelable {
 
     public int getSubChannel() {
         return mSubChannel;
+    }
+
+    public void setSubChannel(int newSubChannel) {
+        this.mSubChannel = newSubChannel;
     }
 
     public int getFrequency() {

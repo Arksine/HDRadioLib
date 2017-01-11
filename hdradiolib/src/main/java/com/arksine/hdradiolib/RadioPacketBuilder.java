@@ -173,8 +173,9 @@ class RadioPacketBuilder {
             case BASS:
             case TREBLE:
                 // TODO: The commented out code below was an attempt to set integer based commands
-                // up or down, the way tune is done.  It didn't work, but perhaps using another
-                // constant will.  Need to reverse engineer the real Radio Controller to see if its possible
+                // up or down, the way tune or seek is done.  It may be possible, but if so I don't have the
+                // correct constant.  It appears any value outside of the range 1-90 is automatically
+                // zero
 
                 //       Will attempt to reverse engineer the Radio controller in the future
                 /*if (data instanceof RadioConstant) {
@@ -184,9 +185,10 @@ class RadioPacketBuilder {
                         Log.i(TAG, "Direction is not valid for tune command");
                         return null;
                     }
-                    dataBuf.put(RadioConstant.ZERO.getBytes());     // pad with 8 zero bytes
+                    dataBuf.put(RadioConstant.SEEK_REQUEST.getBytes());     // try seek request
                     dataBuf.put(RadioConstant.ZERO.getBytes());
                     dataBuf.put(direction.getBytes());
+                    break;
                 }*/
             case HD_SUBCHANNEL:
                 if (!(data instanceof Integer)) {

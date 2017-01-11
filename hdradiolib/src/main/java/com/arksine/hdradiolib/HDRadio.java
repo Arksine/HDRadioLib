@@ -35,8 +35,8 @@ public class HDRadio {
     private static final String ACTION_USB_PERMISSION = "com.arksine.hdradiolib.USB_PERMISSION";
 
     private static final int STREAM_LOCK_TIMEOUT = 10000;
-    private static final int POST_TUNE_DELAY = 2000;
-    private static final int POWER_TOGGLE_DELAY = 1000;
+    private static final int POST_TUNE_DELAY = 1000;
+    private static final int POWER_TOGGLE_DELAY = 2000;
 
     // Only allow one thread to open a device at a time, regardless of the instance
     private static final Object OPEN_LOCK = new Object();
@@ -136,7 +136,7 @@ public class HDRadio {
             HDRadio.this.mControlHandler.post(new Runnable() {
                 @Override
                 public void run() {
-                    //sendRadioCommand(RadioKey.Command.VOLUME, RadioKey.Operation.SET, RadioKey.Constant.UP);
+                    //sendRadioCommand(RadioCommand.VOLUME, RadioOperation.SET, RadioConstant.UP);
                     int volume = HDRadio.this.mDataHandler.getTrackingVariable(RadioCommand.VOLUME);
                     volume++;
 
@@ -249,7 +249,7 @@ public class HDRadio {
                 public void run() {
                     HDRadio.this.sendRadioCommand(RadioCommand.TUNE, RadioOperation.SET, tuneInfo);
 
-                    // TODO: This functionality should probably move to activity
+                    // TODO: not sure that this should be done here
                     final int subchannel = tuneInfo.getSubChannel();
                     if (subchannel > 0) {
                         HDRadio.this.sendRadioCommand(RadioCommand.HD_SUBCHANNEL, RadioOperation.SET, subchannel);
@@ -269,9 +269,9 @@ public class HDRadio {
                                         break;
                                     }
 
-                                    // Try resetting every 100 ms
+                                    // Try resetting every 200 ms
                                     try {
-                                        Thread.sleep(100);
+                                        Thread.sleep(200);
                                     } catch (InterruptedException e) {
                                         e.printStackTrace();
                                     }
@@ -491,9 +491,9 @@ public class HDRadio {
                 this.mRadioConnecton.raiseDTR();
                 this.mIsPoweredOn = true;
 
-                // must sleep for 2.5 seconds before sending radio a request
+                // must sleep for 2 seconds before sending radio a request
                 try {
-                    Thread.sleep(2500);
+                    Thread.sleep(2000);
                 } catch (InterruptedException e) {
                     Log.w(TAG, e.getMessage());
                 }

@@ -106,6 +106,7 @@ class RadioDataHandler extends Handler {
                 this.mPacketStarted = true;
                 this.mIsLengthByte = true;
                 this.mPacketCheckSum = (b & 0xFF);
+                this.mIsEscaped = false;   // just in case a header is read directly after escape byte
             } else if(!this.mPacketStarted) {
                 Log.v(TAG, "Byte received without a start header, discarding");
             } else if (b == (byte)0x1B && !this.mIsEscaped) {
@@ -114,6 +115,9 @@ class RadioDataHandler extends Handler {
             } else {
 
                 if (this.mIsEscaped) {
+                    if (DEBUG)
+                        Log.v(TAG, "Escaped char: " + String.format("%02X", b));
+
                     if (b == (byte)0x48) {
                         // 0x48 is escaped as 0xA4
                         b = (byte) 0xA4;
