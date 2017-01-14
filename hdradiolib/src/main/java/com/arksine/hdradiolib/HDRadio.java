@@ -6,23 +6,34 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.hardware.usb.UsbDevice;
+import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbManager;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
+import android.os.Message;
 import android.os.Process;
 import android.os.SystemClock;
 import android.support.annotation.NonNull;
 import android.util.Log;
+import android.widget.Toast;
 
 import com.arksine.hdradiolib.enums.RadioCommand;
 import com.arksine.hdradiolib.enums.RadioConstant;
+import com.arksine.hdradiolib.enums.RadioError;
 import com.arksine.hdradiolib.enums.RadioOperation;
-import com.ftdi.j2xx.D2xxManager;
-import com.ftdi.j2xx.FT_Device;
+import com.felhr.deviceids.CH34xIds;
+import com.felhr.usbserial.UsbSerialDevice;
+import com.felhr.usbserial.UsbSerialInterface;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+
+// TODO: Create a HDRadioDevice abstract class that handles the connection.  There should be 3
+// descendents: MJSDevice, MCUDevice, BluetoothDevice (or call it something else).  Each one
+// provides functions for connection, disconnection, power toggle (DTR for MJS, custom for the others),
+// and write.  I'll need to provide a static function to enumerate the devices, either all of them,
+// Or 3 functions that enumerate depending on type (perhaps they can return HDRadioDevices).
 
 /**
  * Library to communicate with a DirectedHD DMHD-1000 HD Radio via USB using the MJS Gadgets
@@ -33,6 +44,8 @@ public class HDRadio {
     private static final String TAG = HDRadio.class.getSimpleName();
     private static final boolean DEBUG = true;
     private static final String ACTION_USB_PERMISSION = "com.arksine.hdradiolib.USB_PERMISSION";
+    private static final String ACTION_USB_DETACHED = "android.hardware.usb.action.USB_DEVICE_DETACHED";
+
 
     private static final int STREAM_LOCK_TIMEOUT = 10000;
     private static final int POST_TUNE_DELAY = 1000;
@@ -42,20 +55,20 @@ public class HDRadio {
     private static final Object OPEN_LOCK = new Object();
     private static final Object POWER_LOCK = new Object();
 
-    private static D2xxManager ftdiManager = null;
-
     private Context mContext;
     private String mDeviceSerialNumber = "";
     private String mRadioHardwareId;
     private HDRadioCallbacks mCallbacks = null;
 
+    private volatile UsbDevice mUsbDevice;
+    private UsbSerialDevice mSerialPort;
     private RadioDataHandler mDataHandler;
-    private RadioConnection mRadioConnecton;
 
     private volatile long mPreviousTuneTime = 0;
     private volatile long mPreviousPowerTime = 0;
 
     private volatile boolean mIsPoweredOn = false;
+    private volatile boolean mIsConnected = false;
     private volatile boolean mSeekAll = true;
 
     private Handler mControlHandler;
@@ -359,10 +372,18 @@ public class HDRadio {
         this.mContext = context;
         this.mCallbacks = callbacks;
 
+        // Radio Control Handler
         HandlerThread controlHandlerThread = new HandlerThread("ControlHandlerThread");
         controlHandlerThread.start();
-        Looper looper = controlHandlerThread.getLooper();
-        this.mControlHandler = new Handler(looper);
+        Looper ctrLooper = controlHandlerThread.getLooper();
+        this.mControlHandler = new Handler(ctrLooper);
+
+        // Radio data handler
+        HandlerThread dataHandlerThread = new HandlerThread("RadioDataHandlerThread",
+                Process.THREAD_PRIORITY_BACKGROUND);
+        dataHandlerThread.start();
+        Looper dataLooper = dataHandlerThread.getLooper();
+        this.mDataHandler = new RadioDataHandler(dataLooper, this.mCallbacks);
     }
 
     /**
@@ -376,10 +397,6 @@ public class HDRadio {
         if (this.mDataHandler != null) {
             this.mDataHandler.setCallbacks(cbs);
         }
-
-        if (this.mRadioConnecton != null) {
-            this.mRadioConnecton.setCallbacks(cbs);
-        }
     }
 
     /**
@@ -388,11 +405,10 @@ public class HDRadio {
      * to the controller interface is also sent via the callback, otherwise the controller interface
      * is set to null.
      *
-     * @param serialNumber If null, the first matching enumerated device is opened.  Otherwise an
-     *                     attempt is made to open the device by serial number
+     * @param  dev      The usb device to open
      */
-    public void open(final String serialNumber) {
-        ConnectionThread thread = new ConnectionThread(serialNumber);
+    public void open(final UsbDevice dev) {
+        ConnectionThread thread = new ConnectionThread(dev);
         thread.start();
     }
 
@@ -416,8 +432,14 @@ public class HDRadio {
                         if (HDRadio.this.mIsPoweredOn) {
                             HDRadio.this.powerOffRadio();
                         }
+                        HDRadio.this.mSerialPort.close();
+                        HDRadio.this.mIsConnected = false;
+                        HDRadio.this.mSerialPort = null;
 
-                        HDRadio.this.mRadioConnecton.close();
+                        if (HDRadio.this.mDisconnectReceiverRegistered) {
+                            HDRadio.this.mContext.unregisterReceiver(mDisconnectReceiver);
+                            mDisconnectReceiverRegistered = false;
+                        }
                     }
                 }
 
@@ -429,13 +451,11 @@ public class HDRadio {
     }
 
     public boolean isOpen() {
-        return this.mRadioConnecton != null && this.mRadioConnecton.isOpen();
+        return this.mSerialPort != null && mIsConnected;
     }
 
-    public String getDeviceSerialNumber() {
-        return this.mDeviceSerialNumber;
-    }
-
+    // TODO: for now we only enumerate  HD Radio cables, but in the future I should allow
+    // a way to identify MCUs that are used for HDR communication
     /**
      * Searches connected USB Devices for the MJS Gadgets HD Radio Cable
      *
@@ -485,21 +505,21 @@ public class HDRadio {
             if (!this.mIsPoweredOn) {
 
                 // Set the hardware mute so speakers dont get blown by the initial power on
-                this.mRadioConnecton.raiseRTS();
+                this.mSerialPort.setRTS(true);
 
                 // Raise DTR to power on
-                this.mRadioConnecton.raiseDTR();
+                this.mSerialPort.setDTR(true);
                 this.mIsPoweredOn = true;
 
-                // must sleep for 2 seconds before sending radio a request
+                // must sleep for 3 seconds before sending radio a request
                 try {
-                    Thread.sleep(2000);
+                    Thread.sleep(3000);
                 } catch (InterruptedException e) {
                     Log.w(TAG, e.getMessage());
                 }
 
                 // release RTS (hardware mute)
-                this.mRadioConnecton.clearRTS();
+                this.mSerialPort.setRTS(false);
 
                 if (DEBUG) {
                     sendRadioCommand(RadioCommand.HD_UNIQUE_ID, RadioOperation.GET, null);
@@ -544,7 +564,7 @@ public class HDRadio {
             }
 
             if (this.isOpen() && this.mIsPoweredOn) {
-                this.mRadioConnecton.clearDTR();   // DTR off = Power off
+                this.mSerialPort.setDTR(false);   // DTR off = Power off
                 this.mIsPoweredOn = false;
 
                 if (this.mCallbacks != null) {
@@ -566,7 +586,7 @@ public class HDRadio {
      */
     private void sendRadioCommand(RadioCommand command, RadioOperation operation, Object data) {
         byte[] radioPacket = RadioPacketBuilder.buildRadioPacket(command, operation, data, mSeekAll);
-        if (radioPacket != null && this.mRadioConnecton != null) {
+        if (radioPacket != null && this.mSerialPort != null) {
             // Do not allow any command to execute within 1 second of a direct tune
             long tuneDelay = (this.mPreviousTuneTime + POST_TUNE_DELAY) - SystemClock.elapsedRealtime();
             if (tuneDelay > 0) {
@@ -581,7 +601,7 @@ public class HDRadio {
                 }
             }
 
-            this.mRadioConnecton.writeData(radioPacket);
+            this.mSerialPort.write(radioPacket);
 
 
             // If a tune command with a tuneInfo object was received, it is a direct tune.
@@ -605,6 +625,49 @@ public class HDRadio {
 
     // TODO: Implement Query Device / Open by Hardware ID (Should probably create a HDRadioManger class for this)
 
+    // Broadcast Reciever to handle disconnections (this is temporary)
+    private BroadcastReceiver mDisconnectReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            if (action.equals(ACTION_USB_DETACHED)) {
+                synchronized (this) {
+                    UsbDevice uDev = (UsbDevice) intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+                    if (uDev.equals(HDRadio.this.mUsbDevice)) {
+
+                        Toast.makeText(context, "USB Device Disconnected",
+                                Toast.LENGTH_SHORT).show();
+
+                        // Disconnect from a new thread so we don't block the UI thread
+                        Thread errorThread = new Thread(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (HDRadio.this.mCallbacks != null) {
+                                    HDRadio.this.mCallbacks.onDeviceError(RadioError.CONNECTION_ERROR);
+                                }
+                            }
+                        });
+                        errorThread.start();
+                    }
+                }
+            }
+        }
+    };
+    private volatile boolean mDisconnectReceiverRegistered = false;
+
+    // Callback for bulk reads
+    private UsbSerialInterface.UsbReadCallback mReadCallback = new UsbSerialInterface.UsbReadCallback() {
+
+        @Override
+        public void onReceivedData(byte[] buffer)
+        {
+            // Send the data back to the instantiating class via callback
+            Message msg = HDRadio.this.mDataHandler.obtainMessage();
+            msg.obj = buffer;
+            HDRadio.this.mDataHandler.sendMessage(msg);
+        }
+    };
+
     /**
      * Class to connect to MJS Gadgets HD Radio cable.  It extends Thread because this thread needs
      * to run in the foreground.  All other threads launched in the HDRadio class can be Runnables
@@ -612,27 +675,26 @@ public class HDRadio {
      */
     private class ConnectionThread extends Thread {
 
-        private String mRequestedSerialNumber;
+        private UsbDevice mRequestedUsbDevice;
         private volatile boolean mIsWaiting = false;
-        private volatile boolean mUsbRequestGranted;
+        private volatile boolean mUsbPermissonGranted;
 
-        private BroadcastReceiver usbRequestReceiver = new BroadcastReceiver() {
+        private BroadcastReceiver usbPermissonReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
                 String action = intent.getAction();
                 if (action.equals(ACTION_USB_PERMISSION)) {
                     synchronized (this) {
-                        ConnectionThread.this.mUsbRequestGranted =
+                        ConnectionThread.this.mUsbPermissonGranted =
                                 intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false);
                         ConnectionThread.this.resumeThread();
                     }
                 }
-
             }
         };
 
-        ConnectionThread(String serialNumber) {
-            this.mRequestedSerialNumber = serialNumber;
+        ConnectionThread(UsbDevice dev) {
+            this.mRequestedUsbDevice = dev;
         }
 
         private synchronized void resumeThread() {
@@ -645,133 +707,126 @@ public class HDRadio {
         @Override
         public void run() {
             synchronized (OPEN_LOCK) {
-                // TODO: should possibly put this somewhere else
-                if (ftdiManager == null) {
-                    try {
-                        ftdiManager = D2xxManager.getInstance(HDRadio.this.mContext);
-                    } catch (D2xxManager.D2xxException e) {
-                        Log.e(TAG, "Unable to retreive instance of FTDI Manager");
-                        if (HDRadio.this.mCallbacks != null) {
-                            HDRadio.this.mCallbacks.onOpened(false, null);
-                        }
-                        return;
-                    }
-                    // Add MJS Gadgets cable to the D2XX driver's compatible device list
-                    ftdiManager.setVIDPID(1027, 37752);
-
-                }
-
                 if (HDRadio.this.isOpen()) {
                     Log.i(TAG, "Radio already open");
                     if (HDRadio.this.mCallbacks != null) {
-                        HDRadio.this.mCallbacks.onOpened(true, mController);
+                        HDRadio.this.mCallbacks.onOpened(true, HDRadio.this.mController);
                     }
                     return;
                 }
 
-                // Register USB permission receiver
-                IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
-                HDRadio.this.mContext.registerReceiver(usbRequestReceiver, filter);
+                // TODO: currently only support MJS cables, want to support MCUs and Bluetooth
+                //       connections as well
 
-                UsbManager usbManager = (UsbManager)(HDRadio.this.mContext).getSystemService(Context.USB_SERVICE);
-                ArrayList<UsbDevice> hdDeviceList = HDRadio.this.getUsbRadioDevices();
-                if (hdDeviceList.isEmpty()) {
-                    if (HDRadio.this.mCallbacks != null) {
-                        HDRadio.this.mCallbacks.onOpened(false, null);
+                UsbManager usbManager = (UsbManager)(HDRadio.this.mContext)
+                        .getSystemService(Context.USB_SERVICE);
+
+                if (this.mRequestedUsbDevice == null) {
+                    // find the first mjs cable since a null value was passed
+
+                    ArrayList<UsbDevice> hdDeviceList = HDRadio.this.getUsbRadioDevices();
+                    if (hdDeviceList.isEmpty()) {
+                        // no mjs cable found
+                        Log.e(TAG, "No Usb device passed to open, and no MJS Cables found");
+                        if (HDRadio.this.mCallbacks != null) {
+                            HDRadio.this.mCallbacks.onOpened(false, null);
+                            return;
+                        }
+                    } else {
+                        this.mRequestedUsbDevice = hdDeviceList.get(0);
                     }
-                } else {
+                }
 
-                    FT_Device ftdev = null;
-                    // Iterate through the list of compatible radio devices, comparing serial numbers if necessary
-                    for (UsbDevice hdRadioDev : hdDeviceList) {
-                        if (!usbManager.hasPermission(hdRadioDev)) {
-                            this.mUsbRequestGranted = false;
-                            // request permission and wait
-                            PendingIntent pi = PendingIntent.getBroadcast(HDRadio.this.mContext,
-                                    0, new Intent(ACTION_USB_PERMISSION), 0);
-                            usbManager.requestPermission(hdRadioDev, pi);
+                // Request permission
+                if (!usbManager.hasPermission(this.mRequestedUsbDevice)) {
+                    // Register broadcast receiver
+                    IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
+                    HDRadio.this.mContext.registerReceiver(usbPermissonReceiver, filter);
 
-                            synchronized (this) {
-                                try {
-                                    this.mIsWaiting = true;
-                                    wait();
-                                } catch (InterruptedException e) {
-                                    e.printStackTrace();
-                                }
-                            }
+                    this.mUsbPermissonGranted = false;
+                    // request permission and wait
+                    PendingIntent pi = PendingIntent.getBroadcast(HDRadio.this.mContext,
+                            0, new Intent(ACTION_USB_PERMISSION), 0);
+                    usbManager.requestPermission(this.mRequestedUsbDevice, pi);
 
-                            if (!this.mUsbRequestGranted) {
-                                Log.i(TAG, "Usb Permission not granted to device: " + hdRadioDev.getDeviceName());
-                                break;
-                            }
+                    synchronized (this) {
+                        try {
+                            this.mIsWaiting = true;
+                            wait();
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
                         }
-
-                        // Need to add the usb device to the D2xxManager.  This happens automatically
-                        // with plug events while the app is running.  Otherwise the need to either
-                        // be enumerated via D2xxManager.createDeviceInfoList() or added directly
-                        // like below
-                        //
-                        // If its already there it wont' be duplicated.
-                        if (ftdiManager.addUsbDevice(hdRadioDev) < 1) {
-                            Log.i(TAG, "Device was not added");
-                        }
-
-                        ftdev = ftdiManager.openByUsbDevice(HDRadio.this.mContext, hdRadioDev);
-                        if (ftdev != null && ftdev.isOpen()) {
-                            if (mRequestedSerialNumber == null) {
-                                break;
-                            } else {
-                                String devSerialNumber = ftdev.getDeviceInfo().serialNumber;
-                                if (mRequestedSerialNumber.equals(devSerialNumber)) {
-                                    break;
-                                } else {
-                                    ftdev.close();
-                                    ftdev = null;
-                                    Log.i(TAG, "Requested serial number " + mRequestedSerialNumber + " does not " +
-                                            "match device serial number " + devSerialNumber);
-                                }
-                            }
-                        } else {
-                            Log.i(TAG, "Unable to open device: " + hdRadioDev.getDeviceName());
-                            ftdev = null;
-                        }
-
                     }
 
-                    // If the device was found and opened, initialize and create connection
-                    if (ftdev != null) {
+                    HDRadio.this.mContext.unregisterReceiver(usbPermissonReceiver);
 
-                        HDRadio.this.mDeviceSerialNumber = ftdev.getDeviceInfo().serialNumber;
-                        ftdev.setBitMode((byte) 0, D2xxManager.FT_BITMODE_RESET);
-                        ftdev.setBaudRate(115200);
-                        ftdev.setDataCharacteristics(D2xxManager.FT_DATA_BITS_8,
-                                D2xxManager.FT_STOP_BITS_1, D2xxManager.FT_PARITY_NONE);
-                        ftdev.setFlowControl(D2xxManager.FT_FLOW_NONE, (byte) 0x0b, (byte) 0x0d);
-                        ftdev.clrDtr(); // Don't power on
-                        ftdev.setRts(); // Raise the RTS to turn on hardware mute
+                    if (!this.mUsbPermissonGranted) {
+                        Log.e(TAG, "Usb Permission not granted to device: " + this.mRequestedUsbDevice.getDeviceName());
+                        if (HDRadio.this.mCallbacks != null) {
+                            HDRadio.this.mCallbacks.onOpened(false, null);
+                            return;
+                        }
+                    }
+                }
 
-                        // create radio connection
-                        HandlerThread handlerThread = new HandlerThread("RadioDataHandlerThread",
-                                Process.THREAD_PRIORITY_BACKGROUND);
-                        handlerThread.start();
-                        Looper looper = handlerThread.getLooper();
-                        HDRadio.this.mDataHandler = new RadioDataHandler(looper, HDRadio.this.mCallbacks);
-                        HDRadio.this.mRadioConnecton = new RadioConnection(ftdev,
-                                HDRadio.this.mDataHandler, HDRadio.this.mCallbacks);
+                // We have a usb device with permission, open it
+                UsbDeviceConnection usbConnection = usbManager.openDevice(this.mRequestedUsbDevice);
+                HDRadio.this.mSerialPort = UsbSerialDevice
+                        .createUsbSerialDevice(this.mRequestedUsbDevice, usbConnection);
+                if (HDRadio.this.mSerialPort != null) {
+                    if (HDRadio.this.mSerialPort.open()) {
+                        // Open success
+                        // TODO: Forked Serial library defaults DTR off.  Some MCUs may require DTR on
+                        //mSerialPort.setDTR(true);  // turn off DTR for MJS cables (I wouldn't do this for MCUs)
+                        mSerialPort.setRTS(true);
+                        mSerialPort.setBaudRate(115200);
+                        mSerialPort.setDataBits(UsbSerialInterface.DATA_BITS_8);
+                        mSerialPort.setStopBits(UsbSerialInterface.STOP_BITS_1);
+                        mSerialPort.setParity(UsbSerialInterface.PARITY_NONE);
+                        mSerialPort.setFlowControl(UsbSerialInterface.FLOW_CONTROL_OFF);
+                        mSerialPort.read(HDRadio.this.mReadCallback);
+
+                        // Set the radio's Usb device
+                        HDRadio.this.mUsbDevice = this.mRequestedUsbDevice;
+                        HDRadio.this.mIsConnected = true;
+
+                        // Get the device serial number (API 21+ only, I can probably do it
+                        // with a direct block transfer though)
+                        //HDRadio.this.mDeviceSerialNumber = ftdev.getDeviceInfo().serialNumber;
+
+                        // Register the Broadcast receiver to listen for Radio Disconnections
+                        if (!HDRadio.this.mDisconnectReceiverRegistered) {
+                            IntentFilter filter = new IntentFilter(ACTION_USB_DETACHED);
+                            HDRadio.this.mContext.registerReceiver(HDRadio.this.mDisconnectReceiver, filter);
+                            HDRadio.this.mDisconnectReceiverRegistered = true;
+                        }
+
+                        // Some micro controllers need time to initialize before you can communicate.
+                        // CH34x is one such device, others need to be tested.
+                        if (CH34xIds.isDeviceSupported(mUsbDevice.getVendorId(), mUsbDevice.getProductId())) {
+                            try {
+                                Thread.sleep(2000);
+                            } catch (InterruptedException e) {
+                                Log.w(TAG, e.getMessage());
+                            }
+                        }
 
                         if (HDRadio.this.mCallbacks != null) {
                             HDRadio.this.mCallbacks.onOpened(true, HDRadio.this.mController);
                         }
                     } else {
+                        Log.e(TAG, "Unable to open device");
                         if (HDRadio.this.mCallbacks != null) {
                             HDRadio.this.mCallbacks.onOpened(false, null);
                         }
                     }
+                } else {
+                    Log.e(TAG, "Usb Device not a support serial device");
+                    if (HDRadio.this.mCallbacks != null) {
+                        HDRadio.this.mCallbacks.onOpened(false, null);
+                    }
                 }
-
-                HDRadio.this.mContext.unregisterReceiver(usbRequestReceiver);
             }
         }
     }
-
 }
