@@ -360,8 +360,6 @@ public class HDRadio {
         }
     };
 
-
-
     /**
      * Constructor for the HDRadio class.
      *
@@ -372,6 +370,12 @@ public class HDRadio {
 
         this.mContext = context;
 
+        // Callback Handler
+        HandlerThread callbackHandlerThread = new HandlerThread("CallbackHandlerThread");
+        callbackHandlerThread.start();
+        Looper callbackLooper = callbackHandlerThread.getLooper();
+        this.mCallbackHandler = new CallbackHandler(callbacks, callbackLooper);
+
         // Radio Control Handler
         HandlerThread controlHandlerThread = new HandlerThread("ControlHandlerThread");
         controlHandlerThread.start();
@@ -379,28 +383,10 @@ public class HDRadio {
         this.mControlHandler = new Handler(ctrLooper);
 
         // Radio data handler
-        HandlerThread callbackHandlerThread = new HandlerThread("CallbackHandlerThread");
-        callbackHandlerThread.start();
-        Looper callbackLooper = callbackHandlerThread.getLooper();
-        this.mCallbackHandler = new CallbackHandler(callbacks, callbackLooper);
         HandlerThread dataHandlerThread = new HandlerThread("RadioDataHandlerThread",
                 Process.THREAD_PRIORITY_BACKGROUND);
         dataHandlerThread.start();
         Looper dataLooper = dataHandlerThread.getLooper();
-        this.mDataHandler = new RadioDataHandler(dataLooper, this.mCallbacks);
-    }
-
-    /**
-     * Allows user to reset callbacks at any time
-     *
-     * @param cbs User provided callbacks for HD Radio driver to execute
-     */
-    public void setCallbacks(@NonNull HDRadioCallbacks cbs) {
-        this.mCallbacks = cbs;
-
-        if (this.mDataHandler != null) {
-            this.mDataHandler.setCallbacks(cbs);
-        }
         RadioDataHandler.PowerNotifyCallback powerCb = new RadioDataHandler.PowerNotifyCallback() {
             @Override
             public void onPowerOnReceived() {
@@ -528,12 +514,6 @@ public class HDRadio {
 
                 // Raise DTR to power on
                 this.mSerialPort.setDTR(true);
-                this.mIsPoweredOn = true;
-
-                // must sleep for 3 seconds before sending radio a request
-                try {
-                    Thread.sleep(3000);
-                this.mRadioConnecton.raiseDTR();
 
                 // Wait until the radio gives a power on response, with a 10 second timeout
                 synchronized (this) {
@@ -679,9 +659,11 @@ public class HDRadio {
                         Thread errorThread = new Thread(new Runnable() {
                             @Override
                             public void run() {
-                                if (HDRadio.this.mCallbacks != null) {
-                                    HDRadio.this.mCallbacks.onDeviceError(RadioError.CONNECTION_ERROR);
-                                }
+                                Message msg = HDRadio.this.mCallbackHandler
+                                        .obtainMessage(CallbackHandler.CALLBACK_DEVICE_ERROR);
+                                msg.arg1 = RadioError.CONNECTION_ERROR.ordinal();
+                                HDRadio.this.mCallbackHandler.sendMessage(msg);
+
                             }
                         });
                         errorThread.start();
@@ -746,9 +728,12 @@ public class HDRadio {
             synchronized (OPEN_LOCK) {
                 if (HDRadio.this.isOpen()) {
                     Log.i(TAG, "Radio already open");
-                    if (HDRadio.this.mCallbacks != null) {
-                        HDRadio.this.mCallbacks.onOpened(true, HDRadio.this.mController);
-                    }
+                    // Dispatch On Opened Callback
+                    Message msg = HDRadio.this.mCallbackHandler
+                            .obtainMessage(CallbackHandler.CALLBACK_ON_OPENED);
+                    msg.arg1 = 1;  // Open success
+                    msg.obj = HDRadio.this.mController;
+                    HDRadio.this.mCallbackHandler.sendMessage(msg);
                     return;
                 }
 
@@ -765,10 +750,12 @@ public class HDRadio {
                     if (hdDeviceList.isEmpty()) {
                         // no mjs cable found
                         Log.e(TAG, "No Usb device passed to open, and no MJS Cables found");
-                        if (HDRadio.this.mCallbacks != null) {
-                            HDRadio.this.mCallbacks.onOpened(false, null);
-                            return;
-                        }
+                        // Dispatch On Opened Callback
+                        Message msg = HDRadio.this.mCallbackHandler
+                                .obtainMessage(CallbackHandler.CALLBACK_ON_OPENED);
+                        msg.arg1 = 0;  // Open fail
+                        HDRadio.this.mCallbackHandler.sendMessage(msg);
+                        return;
                     } else {
                         this.mRequestedUsbDevice = hdDeviceList.get(0);
                     }
@@ -799,10 +786,12 @@ public class HDRadio {
 
                     if (!this.mUsbPermissonGranted) {
                         Log.e(TAG, "Usb Permission not granted to device: " + this.mRequestedUsbDevice.getDeviceName());
-                        if (HDRadio.this.mCallbacks != null) {
-                            HDRadio.this.mCallbacks.onOpened(false, null);
-                            return;
-                        }
+                        // Dispatch On Opened Callback
+                        Message msg = HDRadio.this.mCallbackHandler
+                                .obtainMessage(CallbackHandler.CALLBACK_ON_OPENED);
+                        msg.arg1 = 0;  // Open fail
+                        HDRadio.this.mCallbackHandler.sendMessage(msg);
+                        return;
                     }
                 }
 
@@ -848,20 +837,26 @@ public class HDRadio {
                             }
                         }
 
-                        if (HDRadio.this.mCallbacks != null) {
-                            HDRadio.this.mCallbacks.onOpened(true, HDRadio.this.mController);
-                        }
+                        Message msg = HDRadio.this.mCallbackHandler
+                                .obtainMessage(CallbackHandler.CALLBACK_ON_OPENED);
+                        msg.arg1 = 1;  // Open success
+                        msg.obj = HDRadio.this.mController;
+                        HDRadio.this.mCallbackHandler.sendMessage(msg);
                     } else {
                         Log.e(TAG, "Unable to open device");
-                        if (HDRadio.this.mCallbacks != null) {
-                            HDRadio.this.mCallbacks.onOpened(false, null);
-                        }
+                        // Dispatch On Opened Callback
+                        Message msg = HDRadio.this.mCallbackHandler
+                                .obtainMessage(CallbackHandler.CALLBACK_ON_OPENED);
+                        msg.arg1 = 0;  // Open fail
+                        HDRadio.this.mCallbackHandler.sendMessage(msg);
                     }
                 } else {
                     Log.e(TAG, "Usb Device not a support serial device");
-                    if (HDRadio.this.mCallbacks != null) {
-                        HDRadio.this.mCallbacks.onOpened(false, null);
-                    }
+                    // Dispatch On Opened Callback
+                    Message msg = HDRadio.this.mCallbackHandler
+                            .obtainMessage(CallbackHandler.CALLBACK_ON_OPENED);
+                    msg.arg1 = 0;  // Open fail
+                    HDRadio.this.mCallbackHandler.sendMessage(msg);
                 }
             }
         }
