@@ -1,5 +1,6 @@
 package com.arksine.hdradiolib;
 
+import android.os.Handler;
 import android.os.Message;
 import android.os.Process;
 import android.support.annotation.NonNull;
@@ -19,22 +20,18 @@ class RadioConnection {
 
     private FT_Device mFtDevice;
     private RadioDataHandler mDataHandler;
-    private HDRadioCallbacks mCallbacks;
     private ReadThread mReadThread;
+    private Handler mCallbackHandler;
 
 
-    RadioConnection(FT_Device dev, RadioDataHandler dataHandler, HDRadioCallbacks cbs) {
+    RadioConnection(FT_Device dev, RadioDataHandler dataHandler, Handler cbHandler) {
         this.mFtDevice = dev;
         this.mDataHandler = dataHandler;
-        this.mCallbacks = cbs;
+        this.mCallbackHandler = cbHandler;
 
         this.mReadThread = new ReadThread();
         this.mReadThread.setPriority(Process.THREAD_PRIORITY_BACKGROUND);
         this.mReadThread.start();
-    }
-
-    void setCallbacks(@NonNull HDRadioCallbacks callbacks) {
-        this.mCallbacks = callbacks;
     }
 
     boolean isOpen() {
@@ -42,16 +39,17 @@ class RadioConnection {
     }
 
     void writeData(@NonNull byte[] data) {
-        if (mFtDevice == null) {
+        if (this.mFtDevice == null) {
             Log.e(TAG, "Device not created, cannot write");
             return;
         }
 
-        if (mFtDevice.write(data) < 0) {
+        if (this.mFtDevice.write(data) < 0) {
             // device write error
-            if (this.mCallbacks != null) {
-                this.mCallbacks.onDeviceError(RadioError.DATA_WRITE_ERROR);
-            }
+            Message msg = mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_DEVICE_ERROR);
+            msg.arg1 = RadioError.DATA_WRITE_ERROR.ordinal();
+            mCallbackHandler.sendMessage(msg);
+
         }
     }
 
@@ -76,9 +74,10 @@ class RadioConnection {
         if (this.mFtDevice != null) {
             if (!this.mFtDevice.setRts()) {
                 // Device Error
-                if (this.mCallbacks != null) {
-                    this.mCallbacks.onDeviceError(RadioError.RTS_SET_ERROR);
-                }
+                Message msg = mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_DEVICE_ERROR);
+                msg.arg1 = RadioError.RTS_SET_ERROR.ordinal();
+                mCallbackHandler.sendMessage(msg);
+
             }
         }
     }
@@ -87,9 +86,10 @@ class RadioConnection {
         if (this.mFtDevice != null) {
             if(!this.mFtDevice.clrRts()) {
                 // Device Error
-                if (this.mCallbacks != null) {
-                    this.mCallbacks.onDeviceError(RadioError.RTS_CLEAR_ERROR);
-                }
+                Message msg = mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_DEVICE_ERROR);
+                msg.arg1 = RadioError.RTS_CLEAR_ERROR.ordinal();
+                mCallbackHandler.sendMessage(msg);
+
             }
         }
     }
@@ -99,9 +99,10 @@ class RadioConnection {
         if (this.mFtDevice != null) {
             if(!this.mFtDevice.setDtr()){
                 // Device Error
-                if (this.mCallbacks != null) {
-                    this.mCallbacks.onDeviceError(RadioError.DTR_SET_ERROR);
-                }
+                Message msg = mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_DEVICE_ERROR);
+                msg.arg1 = RadioError.DTR_SET_ERROR.ordinal();
+                mCallbackHandler.sendMessage(msg);
+
             }
         }
     }
@@ -110,9 +111,10 @@ class RadioConnection {
         if (this.mFtDevice != null) {
             if(!this.mFtDevice.clrDtr()) {
                 // Device Error
-                if (this.mCallbacks != null) {
-                    this.mCallbacks.onDeviceError(RadioError.DTR_CLEAR_ERROR);
-                }
+                Message msg = mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_DEVICE_ERROR);
+                msg.arg1 = RadioError.DTR_CLEAR_ERROR.ordinal();
+                mCallbackHandler.sendMessage(msg);
+
             }
         }
     }
@@ -167,9 +169,9 @@ class RadioConnection {
 
             if (this.mIsReading) {
                 // Device Error, the loop was broken before reading was stopped by user
-                if (RadioConnection.this.mCallbacks != null) {
-                    RadioConnection.this.mCallbacks.onDeviceError(RadioError.DATA_READ_ERROR);
-                }
+                Message msg = mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_DEVICE_ERROR);
+                msg.arg1 = RadioError.DATA_READ_ERROR.ordinal();
+                mCallbackHandler.sendMessage(msg);
             }
 
             synchronized (this) {

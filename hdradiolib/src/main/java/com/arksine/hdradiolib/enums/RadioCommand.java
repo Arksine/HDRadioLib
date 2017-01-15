@@ -124,4 +124,12 @@ public enum RadioCommand implements Parcelable {
         Log.i(TAG, "No matching Command found for value: " + byteValue);
         return null;
     }
+
+    public static RadioCommand getCommandFromOrdinal(int ord) {
+        if (ord >= 0 && ord < COMMAND_ARRAY.length) {
+            return COMMAND_ARRAY[ord];
+        } else {
+            return null;
+        }
+    }
 }

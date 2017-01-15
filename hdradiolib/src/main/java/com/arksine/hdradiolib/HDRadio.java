@@ -10,6 +10,7 @@ import android.hardware.usb.UsbManager;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
+import android.os.Message;
 import android.os.Process;
 import android.os.SystemClock;
 import android.support.annotation.NonNull;
@@ -47,15 +48,16 @@ public class HDRadio {
     private Context mContext;
     private String mDeviceSerialNumber = "";
     private String mRadioHardwareId;
-    private HDRadioCallbacks mCallbacks = null;
 
     private RadioDataHandler mDataHandler;
     private RadioConnection mRadioConnecton;
+    private CallbackHandler mCallbackHandler;
 
     private volatile long mPreviousTuneTime = 0;
     private volatile long mPreviousPowerTime = 0;
 
     private volatile boolean mIsPoweredOn = false;
+    private volatile boolean mIsWaiting = false;
     private volatile boolean mSeekAll = true;
 
     private Handler mControlHandler;
@@ -352,34 +354,37 @@ public class HDRadio {
      * Constructor for the HDRadio class.
      *
      * @param context       Calling application context
-     * @param callbacks     User provided callbacks for HD Radio driver to execute
+     * @param callbacks     User provided callbacks the callback handler executes
      */
     public HDRadio(@NonNull Context context, @NonNull HDRadioCallbacks callbacks) {
 
         this.mContext = context;
-        this.mCallbacks = callbacks;
 
+        // Callback Handler
+        HandlerThread callbackHandlerThread = new HandlerThread("CallbackHandlerThread");
+        callbackHandlerThread.start();
+        Looper callbackLooper = callbackHandlerThread.getLooper();
+        this.mCallbackHandler = new CallbackHandler(callbacks, callbackLooper);
+
+        // Control Handler
         HandlerThread controlHandlerThread = new HandlerThread("ControlHandlerThread");
         controlHandlerThread.start();
-        Looper looper = controlHandlerThread.getLooper();
-        this.mControlHandler = new Handler(looper);
-    }
+        Looper ctrlLooper = controlHandlerThread.getLooper();
+        this.mControlHandler = new Handler(ctrlLooper);
 
-    /**
-     * Allows user to reset callbacks at any time
-     *
-     * @param cbs User provided callbacks for HD Radio driver to execute
-     */
-    public void setCallbacks(@NonNull HDRadioCallbacks cbs) {
-        this.mCallbacks = cbs;
+        // Data Handler
+        HandlerThread dataHandlerThread = new HandlerThread("RadioDataHandlerThread",
+                Process.THREAD_PRIORITY_BACKGROUND);
+        dataHandlerThread.start();
+        Looper dataLooper = dataHandlerThread.getLooper();
+        RadioDataHandler.PowerNotifyCallback powerCb = new RadioDataHandler.PowerNotifyCallback() {
+            @Override
+            public void onPowerOnReceived() {
+                HDRadio.this.notifyPowerOn();
+            }
+        };
+        this.mDataHandler = new RadioDataHandler(dataLooper, this.mCallbackHandler, powerCb);
 
-        if (this.mDataHandler != null) {
-            this.mDataHandler.setCallbacks(cbs);
-        }
-
-        if (this.mRadioConnecton != null) {
-            this.mRadioConnecton.setCallbacks(cbs);
-        }
     }
 
     /**
@@ -421,9 +426,9 @@ public class HDRadio {
                     }
                 }
 
-                if (HDRadio.this.mCallbacks != null) {
-                    HDRadio.this.mCallbacks.onClosed();
-                }
+                // Post On Closed Callback
+                Message msg = HDRadio.this.mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_ON_CLOSED);
+                HDRadio.this.mCallbackHandler.sendMessage(msg);
             }
         });
     }
@@ -458,6 +463,13 @@ public class HDRadio {
         return hdDeviceList;
     }
 
+    private synchronized void notifyPowerOn() {
+        if (this.mIsWaiting) {
+            this.mIsWaiting = false;
+            notify();
+        }
+    }
+
     /**
      * Powers on the radio.  Although it should only be called from mControlHandler's looper,
      * it remains synchronized so a call to the RadioController's getPowerStatus() function is accurate
@@ -489,11 +501,22 @@ public class HDRadio {
 
                 // Raise DTR to power on
                 this.mRadioConnecton.raiseDTR();
+
+                // Wait until the radio gives a power on response, with a 10 second timeout
+                synchronized (this) {
+                    try {
+                        this.mIsWaiting = true;
+                        wait(10000);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+
                 this.mIsPoweredOn = true;
 
-                // must sleep for 2 seconds before sending radio a request
+                // sleep for 1s after receiving power on confirmation
                 try {
-                    Thread.sleep(2000);
+                    Thread.sleep(1000);
                 } catch (InterruptedException e) {
                     Log.w(TAG, e.getMessage());
                 }
@@ -515,9 +538,10 @@ public class HDRadio {
                     sendRadioCommand(RadioCommand.TUNE, RadioOperation.GET, null);*/
                 }
 
-                if (this.mCallbacks != null) {
-                    this.mCallbacks.onRadioPowerOn();
-                }
+                // Dispatch power on callback
+                Message msg = this.mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_POWER_ON);
+                this.mCallbackHandler.sendMessage(msg);
+
             }
 
             mPreviousPowerTime = SystemClock.elapsedRealtime();
@@ -547,9 +571,9 @@ public class HDRadio {
                 this.mRadioConnecton.clearDTR();   // DTR off = Power off
                 this.mIsPoweredOn = false;
 
-                if (this.mCallbacks != null) {
-                    this.mCallbacks.onRadioPowerOff();
-                }
+                // Dispatch power off callback
+                Message msg = this.mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_POWER_OFF);
+                this.mCallbackHandler.sendMessage(msg);
             }
 
             this.mPreviousPowerTime = SystemClock.elapsedRealtime();
@@ -590,7 +614,7 @@ public class HDRadio {
                 this.mPreviousTuneTime = SystemClock.elapsedRealtime();
             }
 
-            // Always sleep atleast 100ms between commands
+            // Always sleep 100ms between commands
             try {
                 Thread.sleep(100);
             } catch (InterruptedException e) {
@@ -651,9 +675,12 @@ public class HDRadio {
                         ftdiManager = D2xxManager.getInstance(HDRadio.this.mContext);
                     } catch (D2xxManager.D2xxException e) {
                         Log.e(TAG, "Unable to retreive instance of FTDI Manager");
-                        if (HDRadio.this.mCallbacks != null) {
-                            HDRadio.this.mCallbacks.onOpened(false, null);
-                        }
+
+                        // Dispatch On Opened Callback
+                        Message msg = HDRadio.this.mCallbackHandler
+                                .obtainMessage(CallbackHandler.CALLBACK_ON_OPENED);
+                        msg.arg1 = 0;  // Open fail
+                        HDRadio.this.mCallbackHandler.sendMessage(msg);
                         return;
                     }
                     // Add MJS Gadgets cable to the D2XX driver's compatible device list
@@ -663,9 +690,12 @@ public class HDRadio {
 
                 if (HDRadio.this.isOpen()) {
                     Log.i(TAG, "Radio already open");
-                    if (HDRadio.this.mCallbacks != null) {
-                        HDRadio.this.mCallbacks.onOpened(true, mController);
-                    }
+                    // Dispatch On Opened Callback
+                    Message msg = HDRadio.this.mCallbackHandler
+                            .obtainMessage(CallbackHandler.CALLBACK_ON_OPENED);
+                    msg.arg1 = 1;  // Open success
+                    msg.obj = HDRadio.this.mController;
+                    HDRadio.this.mCallbackHandler.sendMessage(msg);
                     return;
                 }
 
@@ -676,9 +706,11 @@ public class HDRadio {
                 UsbManager usbManager = (UsbManager)(HDRadio.this.mContext).getSystemService(Context.USB_SERVICE);
                 ArrayList<UsbDevice> hdDeviceList = HDRadio.this.getUsbRadioDevices();
                 if (hdDeviceList.isEmpty()) {
-                    if (HDRadio.this.mCallbacks != null) {
-                        HDRadio.this.mCallbacks.onOpened(false, null);
-                    }
+                    // Dispatch On Opened Callback
+                    Message msg = HDRadio.this.mCallbackHandler
+                            .obtainMessage(CallbackHandler.CALLBACK_ON_OPENED);
+                    msg.arg1 = 0;  // Open fail
+                    HDRadio.this.mCallbackHandler.sendMessage(msg);
                 } else {
 
                     FT_Device ftdev = null;
@@ -751,21 +783,21 @@ public class HDRadio {
                         ftdev.setRts(); // Raise the RTS to turn on hardware mute
 
                         // create radio connection
-                        HandlerThread handlerThread = new HandlerThread("RadioDataHandlerThread",
-                                Process.THREAD_PRIORITY_BACKGROUND);
-                        handlerThread.start();
-                        Looper looper = handlerThread.getLooper();
-                        HDRadio.this.mDataHandler = new RadioDataHandler(looper, HDRadio.this.mCallbacks);
                         HDRadio.this.mRadioConnecton = new RadioConnection(ftdev,
-                                HDRadio.this.mDataHandler, HDRadio.this.mCallbacks);
+                                HDRadio.this.mDataHandler, HDRadio.this.mCallbackHandler);
 
-                        if (HDRadio.this.mCallbacks != null) {
-                            HDRadio.this.mCallbacks.onOpened(true, HDRadio.this.mController);
-                        }
+                        // Dispatch On Opened Callback
+                        Message msg = HDRadio.this.mCallbackHandler
+                                .obtainMessage(CallbackHandler.CALLBACK_ON_OPENED);
+                        msg.arg1 = 1;  // Open success
+                        msg.obj = HDRadio.this.mController;
+                        HDRadio.this.mCallbackHandler.sendMessage(msg);
                     } else {
-                        if (HDRadio.this.mCallbacks != null) {
-                            HDRadio.this.mCallbacks.onOpened(false, null);
-                        }
+                        // Dispatch On Opened Callback
+                        Message msg = HDRadio.this.mCallbackHandler
+                                .obtainMessage(CallbackHandler.CALLBACK_ON_OPENED);
+                        msg.arg1 = 0;  // Open fail
+                        HDRadio.this.mCallbackHandler.sendMessage(msg);
                     }
                 }
 

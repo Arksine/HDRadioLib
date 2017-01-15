@@ -40,4 +40,12 @@ public enum RadioError implements Parcelable {
     public void writeToParcel(Parcel out, int flags) {
         out.writeInt(ordinal());
     }
+
+    public static RadioError getErrorFromOrdinal(int ord) {
+        if (ord >= 0 && ord < ERROR_ARRAY.length) {
+            return ERROR_ARRAY[ord];
+        } else {
+            return null;
+        }
+    }
 }
