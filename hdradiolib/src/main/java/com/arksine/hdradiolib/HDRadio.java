@@ -58,17 +58,18 @@ public class HDRadio {
     private Context mContext;
     private String mDeviceSerialNumber = "";
     private String mRadioHardwareId;
-    private HDRadioCallbacks mCallbacks = null;
 
     private volatile UsbDevice mUsbDevice;
     private UsbSerialDevice mSerialPort;
     private RadioDataHandler mDataHandler;
+    private CallbackHandler mCallbackHandler;
 
     private volatile long mPreviousTuneTime = 0;
     private volatile long mPreviousPowerTime = 0;
 
     private volatile boolean mIsPoweredOn = false;
     private volatile boolean mIsConnected = false;
+    private volatile boolean mIsWaiting = false;
     private volatile boolean mSeekAll = true;
 
     private Handler mControlHandler;
@@ -365,12 +366,11 @@ public class HDRadio {
      * Constructor for the HDRadio class.
      *
      * @param context       Calling application context
-     * @param callbacks     User provided callbacks for HD Radio driver to execute
+     * @param callbacks     User provided callbacks the callback handler executes
      */
     public HDRadio(@NonNull Context context, @NonNull HDRadioCallbacks callbacks) {
 
         this.mContext = context;
-        this.mCallbacks = callbacks;
 
         // Radio Control Handler
         HandlerThread controlHandlerThread = new HandlerThread("ControlHandlerThread");
@@ -379,6 +379,10 @@ public class HDRadio {
         this.mControlHandler = new Handler(ctrLooper);
 
         // Radio data handler
+        HandlerThread callbackHandlerThread = new HandlerThread("CallbackHandlerThread");
+        callbackHandlerThread.start();
+        Looper callbackLooper = callbackHandlerThread.getLooper();
+        this.mCallbackHandler = new CallbackHandler(callbacks, callbackLooper);
         HandlerThread dataHandlerThread = new HandlerThread("RadioDataHandlerThread",
                 Process.THREAD_PRIORITY_BACKGROUND);
         dataHandlerThread.start();
@@ -397,6 +401,14 @@ public class HDRadio {
         if (this.mDataHandler != null) {
             this.mDataHandler.setCallbacks(cbs);
         }
+        RadioDataHandler.PowerNotifyCallback powerCb = new RadioDataHandler.PowerNotifyCallback() {
+            @Override
+            public void onPowerOnReceived() {
+                HDRadio.this.notifyPowerOn();
+            }
+        };
+        this.mDataHandler = new RadioDataHandler(dataLooper, this.mCallbackHandler, powerCb);
+
     }
 
     /**
@@ -443,9 +455,9 @@ public class HDRadio {
                     }
                 }
 
-                if (HDRadio.this.mCallbacks != null) {
-                    HDRadio.this.mCallbacks.onClosed();
-                }
+                // Post On Closed Callback
+                Message msg = HDRadio.this.mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_ON_CLOSED);
+                HDRadio.this.mCallbackHandler.sendMessage(msg);
             }
         });
     }
@@ -476,6 +488,13 @@ public class HDRadio {
             Log.v(TAG, "MJS Gadgets HD Radio Cable not found");
         }
         return hdDeviceList;
+    }
+
+    private synchronized void notifyPowerOn() {
+        if (this.mIsWaiting) {
+            this.mIsWaiting = false;
+            notify();
+        }
     }
 
     /**
@@ -514,6 +533,23 @@ public class HDRadio {
                 // must sleep for 3 seconds before sending radio a request
                 try {
                     Thread.sleep(3000);
+                this.mRadioConnecton.raiseDTR();
+
+                // Wait until the radio gives a power on response, with a 10 second timeout
+                synchronized (this) {
+                    try {
+                        this.mIsWaiting = true;
+                        wait(10000);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+
+                this.mIsPoweredOn = true;
+
+                // sleep for 1s after receiving power on confirmation
+                try {
+                    Thread.sleep(1000);
                 } catch (InterruptedException e) {
                     Log.w(TAG, e.getMessage());
                 }
@@ -535,9 +571,10 @@ public class HDRadio {
                     sendRadioCommand(RadioCommand.TUNE, RadioOperation.GET, null);*/
                 }
 
-                if (this.mCallbacks != null) {
-                    this.mCallbacks.onRadioPowerOn();
-                }
+                // Dispatch power on callback
+                Message msg = this.mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_POWER_ON);
+                this.mCallbackHandler.sendMessage(msg);
+
             }
 
             mPreviousPowerTime = SystemClock.elapsedRealtime();
@@ -567,9 +604,9 @@ public class HDRadio {
                 this.mSerialPort.setDTR(false);   // DTR off = Power off
                 this.mIsPoweredOn = false;
 
-                if (this.mCallbacks != null) {
-                    this.mCallbacks.onRadioPowerOff();
-                }
+                // Dispatch power off callback
+                Message msg = this.mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_POWER_OFF);
+                this.mCallbackHandler.sendMessage(msg);
             }
 
             this.mPreviousPowerTime = SystemClock.elapsedRealtime();
@@ -610,7 +647,7 @@ public class HDRadio {
                 this.mPreviousTuneTime = SystemClock.elapsedRealtime();
             }
 
-            // Always sleep atleast 100ms between commands
+            // Always sleep 100ms between commands
             try {
                 Thread.sleep(100);
             } catch (InterruptedException e) {

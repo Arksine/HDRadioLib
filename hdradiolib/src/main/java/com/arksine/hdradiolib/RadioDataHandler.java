@@ -37,15 +37,24 @@ class RadioDataHandler extends Handler {
     private volatile int treble = 0;
     private volatile int subchannel = 0;
 
-    private HDRadioCallbacks mRadioCallbacks;
+    private Handler mCallbackHandler;
 
-    RadioDataHandler(@NonNull Looper looper, @NonNull HDRadioCallbacks cbs) {
-        super(looper);
-        this.mRadioCallbacks = cbs;
+    /**
+     * The interface below is a callback for the main HDRadio class, notifying it that
+     * a power on reply was recieved.  This is necessary to correctly time commands after power
+     * on.
+     */
+    interface PowerNotifyCallback {
+        void onPowerOnReceived();
     }
+    PowerNotifyCallback powerCb;
 
-    void setCallbacks(@NonNull HDRadioCallbacks cbs) {
-        this.mRadioCallbacks = cbs;
+
+    RadioDataHandler(@NonNull Looper looper, @NonNull Handler cbHandler,
+                     @NonNull PowerNotifyCallback pcb) {
+        super(looper);
+        this.mCallbackHandler = cbHandler;
+        this.powerCb = pcb;
     }
 
     /**
@@ -191,17 +200,16 @@ class RadioDataHandler extends Handler {
         }
 
 
-
-        byte[] stringBytes;
-
         // Process packet by data type
         RadioCommand.Type dataType = command.getType();
+        Message msg = this.mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_DATA_RECEIVED);
+        msg.arg1 = command.ordinal();
         switch (dataType) {
-            case INT:
+            case INT: {
                 int intValue;
                 intValue = msgBuf.getInt();
 
-                if(DEBUG)
+                if (DEBUG)
                     Log.v(TAG, command.toString() + " value: " + intValue);
 
 
@@ -232,12 +240,12 @@ class RadioDataHandler extends Handler {
                         break;
                 }
 
-                // Execute callback with command and data
-                if (this.mRadioCallbacks != null) {
-                    this.mRadioCallbacks.onRadioDataReceived(command, intValue);
-                }
+                // Dispatch callback with command and data
+                msg.obj = intValue;
+                this.mCallbackHandler.sendMessage(msg);
                 break;
-            case BOOLEAN:
+            }
+            case BOOLEAN: {
                 // Boolean's are received as 4 bytes, 0 is false 1 is true.
                 int boolValue = msgBuf.getInt();
                 boolean status;
@@ -249,12 +257,18 @@ class RadioDataHandler extends Handler {
                     Log.i(TAG, "Invalid boolean value: " + boolValue);
                     return;
                 }
-                // Execute callback with command and data
-                if (this.mRadioCallbacks != null) {
-                    this.mRadioCallbacks.onRadioDataReceived(command, status);
+
+                // Notify the HDRadio class that a Power ON reply was received
+                if (command == RadioCommand.POWER && status) {
+                    powerCb.onPowerOnReceived();
                 }
+
+                // Dispatch callback with command and data
+                msg.obj = status;
+                this.mCallbackHandler.sendMessage(msg);
                 break;
-            case STRING:
+            }
+            case STRING: {
                 // Get length of the string
                 int strLength = msgBuf.getInt();
 
@@ -263,24 +277,25 @@ class RadioDataHandler extends Handler {
                     strLength = msgBuf.remaining();
                 }
 
-                String msg;
+                String strMsg;
+                byte[] stringBytes;
                 if (strLength == 0) {
-                    msg = "";
+                    strMsg = "";
                 } else {
                     stringBytes = new byte[strLength];
                     msgBuf.get(stringBytes);
-                    msg = new String(stringBytes);
+                    strMsg = new String(stringBytes);
                 }
 
                 if (DEBUG)
-                    Log.d(TAG, "Length: " + strLength +"\nConverted String: \n" + msg);
+                    Log.d(TAG, "Length: " + strLength + "\nConverted String: \n" + strMsg);
 
-                // Execute callback with command and data
-                if (this.mRadioCallbacks != null) {
-                    this.mRadioCallbacks.onRadioDataReceived(command, msg);
-                }
+                // Dispatch callback with command and data
+                msg.obj = strMsg;
+                this.mCallbackHandler.sendMessage(msg);
                 break;
-            case TUNEINFO:
+            }
+            case TUNEINFO: {
                 RadioBand band;
                 int bandValue = msgBuf.getInt();     // Get band bytes
                 if (bandValue == 0) {
@@ -294,13 +309,12 @@ class RadioDataHandler extends Handler {
                 int freqency = msgBuf.getInt();    // Get frequency bytes
                 TuneInfo info = new TuneInfo(band, freqency, 0);
 
-                // Execute callback with command and data
-                if (this.mRadioCallbacks != null) {
-                    this.mRadioCallbacks.onRadioDataReceived(command, info);
-                }
+                // Dispatch callback with command and data
+                msg.obj = info;
+                this.mCallbackHandler.sendMessage(msg);
                 break;
-
-            case HDSONGINFO:
+            }
+            case HDSONGINFO: {
                 int subch = msgBuf.getInt();
                 int infoLength = msgBuf.getInt();
 
@@ -310,6 +324,7 @@ class RadioDataHandler extends Handler {
                 }
 
                 String songInfo;
+                byte[] stringBytes;
                 if (infoLength == 0) {
                     songInfo = "";
                 } else {
@@ -319,13 +334,11 @@ class RadioDataHandler extends Handler {
                 }
 
                 HDSongInfo hdSongInfo = new HDSongInfo(songInfo, subch);
-
-                // Execute callback with command and data
-                if (this.mRadioCallbacks != null) {
-                    this.mRadioCallbacks.onRadioDataReceived(command, hdSongInfo);
-                }
-
+                // Dispatch callback with command and data
+                msg.obj = hdSongInfo;
+                this.mCallbackHandler.sendMessage(msg);
                 break;
+            }
             default:
                 Log.wtf(TAG, "Unknown type");
         }
