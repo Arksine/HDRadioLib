@@ -3,6 +3,7 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/HDRadioLib.iml" filepath="$PROJECT_DIR$/HDRadioLib.iml" />
+      <module fileurl="file://$PROJECT_DIR$/basicexample/basicexample.iml" filepath="$PROJECT_DIR$/basicexample/basicexample.iml" />
       <module fileurl="file://$PROJECT_DIR$/hdradiolib/hdradiolib.iml" filepath="$PROJECT_DIR$/hdradiolib/hdradiolib.iml" />
     </modules>
   </component>
