@@ -46,6 +46,7 @@ class RadioConnection {
 
         if (this.mFtDevice.write(data) < 0) {
             // device write error
+            this.close();
             Message msg = mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_DEVICE_ERROR);
             msg.arg1 = RadioError.DATA_WRITE_ERROR.ordinal();
             mCallbackHandler.sendMessage(msg);
@@ -63,7 +64,7 @@ class RadioConnection {
 
 
         if (this.isOpen()) {
-            this.mFtDevice.clrDtr();   // power off before closing
+            this.mFtDevice.clrDtr();   // clear DTR to power off before closing
             this.mFtDevice.close();
         }
 
@@ -74,6 +75,7 @@ class RadioConnection {
         if (this.mFtDevice != null) {
             if (!this.mFtDevice.setRts()) {
                 // Device Error
+                this.close();
                 Message msg = mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_DEVICE_ERROR);
                 msg.arg1 = RadioError.RTS_SET_ERROR.ordinal();
                 mCallbackHandler.sendMessage(msg);
@@ -86,6 +88,7 @@ class RadioConnection {
         if (this.mFtDevice != null) {
             if(!this.mFtDevice.clrRts()) {
                 // Device Error
+                this.close();
                 Message msg = mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_DEVICE_ERROR);
                 msg.arg1 = RadioError.RTS_CLEAR_ERROR.ordinal();
                 mCallbackHandler.sendMessage(msg);
@@ -99,6 +102,7 @@ class RadioConnection {
         if (this.mFtDevice != null) {
             if(!this.mFtDevice.setDtr()){
                 // Device Error
+                this.close();
                 Message msg = mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_DEVICE_ERROR);
                 msg.arg1 = RadioError.DTR_SET_ERROR.ordinal();
                 mCallbackHandler.sendMessage(msg);
@@ -111,6 +115,7 @@ class RadioConnection {
         if (this.mFtDevice != null) {
             if(!this.mFtDevice.clrDtr()) {
                 // Device Error
+                this.close();
                 Message msg = mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_DEVICE_ERROR);
                 msg.arg1 = RadioError.DTR_CLEAR_ERROR.ordinal();
                 mCallbackHandler.sendMessage(msg);
@@ -122,7 +127,7 @@ class RadioConnection {
 
     private class ReadThread extends Thread {
         private static final int MAX_READ_SIZE = 256;
-        private volatile boolean mIsReading;
+        private volatile boolean mIsReading = false;
         private volatile boolean mIsWaiting = false;
 
         @Override
@@ -172,6 +177,11 @@ class RadioConnection {
                 Message msg = mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_DEVICE_ERROR);
                 msg.arg1 = RadioError.DATA_READ_ERROR.ordinal();
                 mCallbackHandler.sendMessage(msg);
+                this.mIsReading = false;
+                if (RadioConnection.this.isOpen()) {
+                    RadioConnection.this.mFtDevice.clrDtr();   // power off before closing
+                    RadioConnection.this.mFtDevice.close();
+                }
             }
 
             synchronized (this) {
@@ -183,12 +193,14 @@ class RadioConnection {
         }
 
         synchronized void stopReading() {
-            this.mIsWaiting = true;
-            this.mIsReading = false;
-            try {
-                wait(10000);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
+            if (this.mIsReading) {
+                this.mIsWaiting = true;
+                this.mIsReading = false;
+                try {
+                    wait(10000);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
             }
         }
 

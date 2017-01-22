@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<RelativeLayout
+<LinearLayout
     android:id="@+id/activity_radio"
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
@@ -9,10 +9,145 @@
     android:paddingLeft="@dimen/activity_horizontal_margin"
     android:paddingRight="@dimen/activity_horizontal_margin"
     android:paddingTop="@dimen/activity_vertical_margin"
+    android:orientation="vertical"
     tools:context="com.arksine.hdradiolib.basicexample.RadioActivity">
 
-    <TextView
-        android:layout_width="wrap_content"
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Hello World!"/>
-</RelativeLayout>
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:layout_marginBottom="10dp">
+
+        <ToggleButton
+            android:id="@+id/btn_radio_power"
+            android:textOff="Power"
+            android:textOn="Power"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <ToggleButton
+            android:id="@+id/btn_radio_mute"
+            android:textOff="Mute"
+            android:textOn="Mute"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <ToggleButton
+            android:id="@+id/btn_radio_seekall"
+            android:textOff="Seek All"
+            android:textOn="Seek All"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <ToggleButton
+            android:id="@+id/btn_radio_band"
+            android:textOff="Band"
+            android:textOn="Band"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <!--If RDS or HD info is being received, this textview tells us-->
+        <TextView
+            android:id="@+id/txt_radio_info_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAppearance="?android:attr/textAppearanceMedium"
+            android:layout_marginEnd="10dp"/>
+
+        <TextView
+            android:text="101.1"
+            android:id="@+id/txt_radio_frequency"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:textSize="40sp"
+            android:textAppearance="?android:attr/textAppearanceLarge"
+            android:layout_marginStart="15dp"
+            android:layout_marginEnd="10dp"/>
+
+        <TextView
+            android:text="FM"
+            android:id="@+id/txt_radio_band"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="40sp"
+            android:textAppearance="?android:attr/textAppearanceLarge"
+            android:layout_marginEnd="15dp"/>
+
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="5dp">
+
+        <TextView
+            android:id="@+id/txt_radio_info"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:maxLines="1"
+            android:textAppearance="?android:attr/textAppearanceLarge"/>
+
+    </ScrollView>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:layout_marginBottom="10dp">
+
+        <Button
+            android:id="@+id/btn_tune_up"
+            android:text="Tune Up"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <Button
+            android:id="@+id/btn_tune_down"
+            android:text="Tune Down"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <Button
+            android:id="@+id/btn_seek_up"
+            android:text="Seek Up"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/btn_seek_down"
+            android:text="Seek Down"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <TextView
+            android:text="Volume:"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="10dp"/>
+
+        <SeekBar
+            android:id="@+id/seekbar_volume"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="90"/>
+    </LinearLayout>
+
+</LinearLayout>
