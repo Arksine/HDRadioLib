@@ -12,6 +12,9 @@ import com.arksine.hdradiolib.enums.RadioBand;
 import com.arksine.hdradiolib.enums.RadioCommand;
 
 import java.util.HashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Class containing values returned by the HD Radio, with methods to get and set them.  Calls
@@ -22,13 +25,40 @@ public class HDRadioValues {
     private static final String TAG = HDRadioValues.class.getSimpleName();
     private static final boolean DEBUG = true;
 
-    private final Object WRITE_LOCK = new Object();
-
     private volatile boolean mSeekAll;
 
-    private SparseArray<String> mHdTitles = new SparseArray<>(5);
-    private SparseArray<String> mHdArtists = new SparseArray<>(5);
-    private final HashMap<RadioCommand, Object> mHdValues = new HashMap<>(26);
+    private SparseArray<AtomicReference<String>> mHdTitles = new SparseArray<>(5);
+    private SparseArray<AtomicReference<String>> mHdArtists = new SparseArray<>(5);
+
+    private AtomicBoolean mPower;
+    private AtomicBoolean mMute;
+    private AtomicInteger mSignalStrength;
+    private AtomicReference<TuneInfo> mTune;
+    // Dont need to store tuneinfo received from SEEK command
+    private AtomicBoolean mHdActive;
+    private AtomicBoolean mHdStreamLock;
+    private AtomicInteger mHdSignalStrength;
+    private AtomicInteger mHdSubchannel;
+    private AtomicInteger mHdSubchannelCount;
+    private AtomicBoolean mHdEnableHdTuner;    // TODO: this variable's description makes little sense, and it seems to reuturn an integer value instead of boolean
+    private AtomicReference<String> mHdTitle;
+    private AtomicReference<String> mHdArtist;
+    private AtomicReference<String> mHdCallsign;
+    private AtomicReference<String> mHdStationName;
+    private AtomicReference<String> mUniqueId;
+    private AtomicReference<String> mApiVersion;
+    private AtomicReference<String> mHwVersion;
+    private AtomicBoolean mRdsEnabled;
+    private AtomicReference<String> mRdsGenre;
+    private AtomicReference<String> mRdsProgramService;
+    private AtomicReference<String> mRdsRadioText;
+    private AtomicInteger mVolume;
+    private AtomicInteger mBass;
+    private AtomicInteger mTreble;
+    private AtomicInteger mCompression;  // TODO:  Don't know what this is, you can't seem to be able to change it.
+
+    // TODO:  Move this class to the hd radio libary.  We'll store values there, and provide functions to retreive
+    // each one.  It would be better to abstract enums from the user if possible.
 
     public HDRadioValues(Context context) {
 
@@ -42,110 +72,249 @@ public class HDRadioValues {
 
         mSeekAll = globalPrefs.getBoolean("radio_pref_key_seekall", true);
 
-        // TODO: Don't really need to store seek
-        mHdValues.put(RadioCommand.POWER, false);
-        mHdValues.put(RadioCommand.MUTE, false);
-        mHdValues.put(RadioCommand.SIGNAL_STRENGTH, 0);
-        mHdValues.put(RadioCommand.TUNE, info);
-        mHdValues.put(RadioCommand.SEEK, 0);
-        mHdValues.put(RadioCommand.HD_ACTIVE, false);
-        mHdValues.put(RadioCommand.HD_STREAM_LOCK, false);
-        mHdValues.put(RadioCommand.HD_SIGNAL_STRENGTH, 0);
-        mHdValues.put(RadioCommand.HD_SUBCHANNEL, subchannel);
-        mHdValues.put(RadioCommand.HD_SUBCHANNEL_COUNT, 0);
-        mHdValues.put(RadioCommand.HD_ENABLE_HD_TUNER, true);
-        mHdValues.put(RadioCommand.HD_TITLE, "");
-        mHdValues.put(RadioCommand.HD_ARTIST, "");
-        mHdValues.put(RadioCommand.HD_CALLSIGN, "");
-        mHdValues.put(RadioCommand.HD_STATION_NAME, "");
-        mHdValues.put(RadioCommand.HD_UNIQUE_ID, "");
-        mHdValues.put(RadioCommand.HD_API_VERSION, "");
-        mHdValues.put(RadioCommand.HD_HW_VERSION, "");
-        mHdValues.put(RadioCommand.RDS_ENABLED, false);
-        mHdValues.put(RadioCommand.RDS_GENRE, "");
-        mHdValues.put(RadioCommand.RDS_PROGRAM_SERVICE, "");
-        mHdValues.put(RadioCommand.RDS_RADIO_TEXT, "");
-        mHdValues.put(RadioCommand.VOLUME, 0);
-        mHdValues.put(RadioCommand.BASS, 0);
-        mHdValues.put(RadioCommand.TREBLE, 0);
-        mHdValues.put(RadioCommand.COMPRESSION, 0);
+
+        mPower = new AtomicBoolean(false);
+        mMute = new AtomicBoolean(false);
+        mSignalStrength = new AtomicInteger(0);
+        mTune = new AtomicReference<>(info);
+        mHdActive = new AtomicBoolean(false);
+        mHdStreamLock = new AtomicBoolean(false);
+        mHdSignalStrength = new AtomicInteger(0);
+        mHdSubchannel = new AtomicInteger(subchannel);
+        mHdSubchannelCount = new AtomicInteger(0);
+        mHdEnableHdTuner = new AtomicBoolean(true);
+        mHdTitle = new AtomicReference<>("");
+        mHdArtist = new AtomicReference<>("");
+        mHdCallsign = new AtomicReference<>("");
+        mHdStationName = new AtomicReference<>("");
+        mUniqueId = new AtomicReference<>("");
+        mApiVersion = new AtomicReference<>("");
+        mHwVersion = new AtomicReference<>("");
+        mRdsEnabled = new AtomicBoolean(false);
+        mRdsGenre = new AtomicReference<>("");
+        mRdsProgramService = new AtomicReference<>("");
+        mRdsRadioText = new AtomicReference<>("");
+        mVolume = new AtomicInteger(0);
+        mBass = new AtomicInteger(0);
+        mTreble = new AtomicInteger(0);
+        mCompression = new AtomicInteger(0);
+
     }
 
     public Object getHdValue(RadioCommand key) {
-        synchronized (WRITE_LOCK) {
-            return mHdValues.get(key);
+
+        switch (key) {
+            case POWER:
+                return mPower.get();
+            case MUTE:
+                return mMute.get();
+            case SIGNAL_STRENGTH:
+                return mSignalStrength.get();
+            case TUNE:
+                return mTune.get();
+            case HD_ACTIVE:
+                return mHdActive.get();
+            case HD_STREAM_LOCK:
+                return mHdStreamLock.get();
+            case HD_SIGNAL_STRENGTH:
+                return mHdSignalStrength.get();
+            case HD_SUBCHANNEL:
+                return mHdSubchannel.get();
+            case HD_SUBCHANNEL_COUNT:
+                return mHdSubchannelCount.get();
+            case HD_ENABLE_HD_TUNER:
+                return mHdEnableHdTuner.get();
+            case HD_TITLE:
+                return mHdTitle.get();
+            case HD_ARTIST:
+                return mHdArtist.get();
+            case HD_CALLSIGN:
+                return mHdCallsign.get();
+            case HD_STATION_NAME:
+                return mHdStationName.get();
+            case HD_UNIQUE_ID:
+                return mUniqueId.get();
+            case HD_API_VERSION:
+                return mApiVersion.get();
+            case HD_HW_VERSION:
+                return mHwVersion.get();
+            case RDS_ENABLED:
+                return mRdsEnabled.get();
+            case RDS_GENRE:
+                return mRdsGenre.get();
+            case RDS_PROGRAM_SERVICE:
+                return mRdsProgramService.get();
+            case RDS_RADIO_TEXT:
+                return mRdsRadioText.get();
+            case VOLUME:
+                return mVolume.get();
+            case BASS:
+                return mBass.get();
+            case TREBLE:
+                return mTreble.get();
+            case COMPRESSION:
+                return mCompression.get();
+            default:
+                Log.i(TAG, "Invalid key");
+                return null;
         }
+
     }
 
     public void setHdValue(RadioCommand key, Object value) {
-        synchronized (WRITE_LOCK) {
-            switch (key) {
-                case HD_SUBCHANNEL:
-                    int index = (int) value;
-                    String title = mHdTitles.get(index);
-                    String artist = mHdArtists.get(index);
 
-                    // check for null values
-                    if (title == null)
-                        title = "";
-                    if (artist == null)
-                        artist = "";
+        switch (key) {
+            case POWER:
+                mPower.set((boolean)value);
+                break;
+            case MUTE:
+                mMute.set((boolean)value);
+                break;
+            case SIGNAL_STRENGTH:
+                mSignalStrength.set((int)value);
+                break;
+            case TUNE:
+                // reset values when we tune to a new channel
+                mHdSubchannel.set(0);
+                mHdSubchannelCount.set(0);
+                mHdActive.set(false);
+                mHdStreamLock.set(false);
+                mRdsEnabled.set(false);
+                mRdsGenre.set("");
+                mRdsProgramService.set("");
+                mRdsRadioText.set("");
+                mHdCallsign.set("");
+                mHdStationName.set("");
+                mHdTitle.set("");
+                mHdArtist.set("");
+                mHdArtists.clear();
+                mHdTitles.clear();
 
-                    mHdValues.put(RadioCommand.HD_TITLE, title);
-                    mHdValues.put(RadioCommand.HD_ARTIST, artist);
+                mTune.set((TuneInfo)value);
+                break;
+            case SEEK:
+                // Don't need to store seek value
+                return;
+            case HD_ACTIVE:
+                mHdActive.set((boolean)value);
+                break;
+            case HD_STREAM_LOCK:
+                mHdStreamLock.set((boolean)value);
+                break;
+            case HD_SIGNAL_STRENGTH:
+                mHdSignalStrength.set((int)value);
+                break;
+            case HD_SUBCHANNEL: {
+                int index = (int) value;
+                AtomicReference<String> titleRef = mHdTitles.get(index);
 
-                    // update the subchannel in tuneinfo
-                    TuneInfo info = (TuneInfo)mHdValues.get(RadioCommand.TUNE);
-                    if (info != null) {
-                        info.setSubChannel((int)value);
-                    }
-                    break;
-                case TUNE:
-                    // reset values when we tune to a new channel
-                    mHdValues.put(RadioCommand.HD_SUBCHANNEL, 0);
-                    mHdValues.put(RadioCommand.HD_SUBCHANNEL_COUNT, 0);
-                    mHdValues.put(RadioCommand.HD_ACTIVE, false);
-                    mHdValues.put(RadioCommand.HD_STREAM_LOCK, false);
-                    mHdValues.put(RadioCommand.RDS_ENABLED, false);
-                    mHdValues.put(RadioCommand.RDS_GENRE, "");
-                    mHdValues.put(RadioCommand.RDS_PROGRAM_SERVICE, "");
-                    mHdValues.put(RadioCommand.RDS_RADIO_TEXT, "");
-                    mHdValues.put(RadioCommand.HD_CALLSIGN, "");
-                    mHdValues.put(RadioCommand.HD_STATION_NAME, "");
-                    mHdValues.put(RadioCommand.HD_TITLE, "");
-                    mHdValues.put(RadioCommand.HD_ARTIST, "");
-                    mHdArtists.clear();
-                    mHdTitles.clear();
-                    break;
-                case HD_TITLE:
-                    HDSongInfo val = (HDSongInfo) value;
-                    mHdTitles.put(val.getSubchannel(), val.getInfo());
-                    value = val.getInfo();
-                    break;
-                case HD_ARTIST:
-                    HDSongInfo val2 = (HDSongInfo) value;
-                    mHdArtists.put(val2.getSubchannel(), val2.getInfo());
-                    value = val2.getInfo();
-                    break;
-                case SEEK:
-                    // Don't need to store seek value
-                    return;
-                default:
-            }
+                AtomicReference<String> artistRef = mHdArtists.get(index);
 
-            if (DEBUG) {
-                if (value instanceof TuneInfo) {
-                    Log.v(TAG, "Stored " + key.toString() + ": "
-                            + ((TuneInfo) value).getFrequency() + " "
-                            + ((TuneInfo) value).getBand().toString());
-                } else {
-                    Log.v(TAG, "Stored " + key.toString() + ": " + value);
+                // check for null values
+                if (titleRef == null)
+                    titleRef = new AtomicReference<>("");
+                if (artistRef == null)
+                    artistRef = new AtomicReference<>("");
+
+                mHdTitle.set(titleRef.get());
+                mHdArtist.set(artistRef.get());
+
+                // update the subchannel in tuneinfo
+                TuneInfo info = mTune.get();
+                if (info != null) {
+                    info.setSubChannel((int) value);
+                    mTune.set(info);
                 }
+
+                mHdSubchannel.set((int) value);
+                break;
             }
+            case HD_SUBCHANNEL_COUNT:
+                mHdSubchannelCount.set((int)value);
+                break;
+            case HD_ENABLE_HD_TUNER:
+                mHdEnableHdTuner.set((boolean)value);
+                break;
+            case HD_TITLE: {
+                HDSongInfo val = (HDSongInfo) value;
+                AtomicReference<String> titleRef = mHdTitles.get(val.getSubchannel());
+                if (titleRef != null)
+                    titleRef.set(val.getInfo());
+                else {
+                    titleRef = new AtomicReference<>(val.getInfo());
+                }
+                mHdTitles.put(val.getSubchannel(), titleRef);
+                value = val.getInfo();
 
+                mHdTitle.set(val.getInfo());
+                break;
+            }
+            case HD_ARTIST: {
+                HDSongInfo val = (HDSongInfo) value;
+                AtomicReference<String> artistRef = mHdArtists.get(val.getSubchannel());
+                if (artistRef != null)
+                    artistRef.set(val.getInfo());
+                else {
+                    artistRef = new AtomicReference<>(val.getInfo());
+                }
+                mHdArtists.put(val.getSubchannel(), artistRef);
+                value = val.getInfo();
 
-            mHdValues.put(key, value);
+                mHdArtist.set(val.getInfo());
+                break;
+            }
+            case HD_CALLSIGN:
+                mHdCallsign.set((String)value);
+                break;
+            case HD_STATION_NAME:
+                mHdStationName.set((String)value);
+                break;
+            case HD_UNIQUE_ID:
+                mUniqueId.set((String)value);
+                break;
+            case HD_API_VERSION:
+                mApiVersion.set((String)value);
+                break;
+            case HD_HW_VERSION:
+                mHwVersion.set((String)value);
+                break;
+            case RDS_ENABLED:
+                mRdsEnabled.set((boolean)value);
+                break;
+            case RDS_GENRE:
+                mRdsGenre.set((String)value);
+                break;
+            case RDS_PROGRAM_SERVICE:
+                mRdsProgramService.set((String)value);
+                break;
+            case RDS_RADIO_TEXT:
+                mRdsRadioText.set((String)value);
+                break;
+            case VOLUME:
+                mVolume.set((int)value);
+                break;
+            case BASS:
+                mBass.set((int)value);
+                break;
+            case TREBLE:
+                mTreble.set((int)value);
+                break;
+            case COMPRESSION:
+                mCompression.set((int)value);
+                break;
+            default:
         }
+
+        if (DEBUG) {
+            if (value instanceof TuneInfo) {
+                Log.v(TAG, "Stored " + key.toString() + ": "
+                        + ((TuneInfo) value).getFrequency() + " "
+                        + ((TuneInfo) value).getBand().toString());
+            } else {
+                Log.v(TAG, "Stored " + key.toString() + ": " + value);
+            }
+        }
+
     }
 
     public boolean getSeekAll() {
@@ -159,13 +328,15 @@ public class HDRadioValues {
     public void savePersistentPrefs(Context context) {
         // Persist changeable values
         SharedPreferences globalPrefs = PreferenceManager.getDefaultSharedPreferences(context);
-        TuneInfo tuneInfo = (TuneInfo)mHdValues.get(RadioCommand.TUNE);
-        boolean hdActive = (boolean)mHdValues.get(RadioCommand.HD_ACTIVE);
+        TuneInfo tuneInfo = mTune.get();
+        boolean hdActive = mHdActive.get();
 
-        int subchannel = (hdActive) ? (int)mHdValues.get(RadioCommand.HD_SUBCHANNEL) : 0;
-        int volume = (int)mHdValues.get(RadioCommand.VOLUME);
-        int bass = (int)mHdValues.get(RadioCommand.BASS);
-        int treble = (int)mHdValues.get(RadioCommand.TREBLE);
+        int subchannel = (hdActive) ? mHdSubchannel.get() : 0;
+
+        // TODO: Should I persist these?
+        int volume =  mVolume.get();
+        int bass = mBass.get();
+        int treble = mTreble.get();
 
         globalPrefs.edit()
                 .putInt("radio_pref_key_frequency", tuneInfo.getFrequency())
