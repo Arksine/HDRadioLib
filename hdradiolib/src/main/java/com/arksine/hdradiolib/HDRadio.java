@@ -1,29 +1,25 @@
 package com.arksine.hdradiolib;
 
-import android.app.PendingIntent;
-import android.content.BroadcastReceiver;
 import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
-import android.hardware.usb.UsbDevice;
-import android.hardware.usb.UsbManager;
+import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
-import android.os.Message;
 import android.os.Process;
 import android.os.SystemClock;
 import android.support.annotation.NonNull;
 import android.util.Log;
 
+import com.arksine.hdradiolib.enums.PowerStatus;
+import com.arksine.hdradiolib.enums.RadioBand;
 import com.arksine.hdradiolib.enums.RadioCommand;
 import com.arksine.hdradiolib.enums.RadioConstant;
+import com.arksine.hdradiolib.enums.RadioError;
 import com.arksine.hdradiolib.enums.RadioOperation;
-import com.ftdi.j2xx.D2xxManager;
-import com.ftdi.j2xx.FT_Device;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Library to communicate with a DirectedHD DMHD-1000 HD Radio via USB using the MJS Gadgets
@@ -33,47 +29,73 @@ import java.util.HashMap;
 public class HDRadio {
     private static final String TAG = HDRadio.class.getSimpleName();
     private static final boolean DEBUG = true;
-    private static final String ACTION_USB_PERMISSION = "com.arksine.hdradiolib.USB_PERMISSION";
+    private SharedPreferences mRadioPreferences;
 
-    private static final int STREAM_LOCK_TIMEOUT = 10000;
+    public enum DriverType {MJS_DRIVER, USB_SERIAL_TEST_DRIVER, CUSTOM}
+
+    private static final int POST_COMMAND_DELAY = 150;
     private static final int POST_TUNE_DELAY = 1000;
     private static final int POWER_TOGGLE_DELAY = 2000;
-
-    // Only allow one thread to open a device at a time, regardless of the instance
-    private static final Object OPEN_LOCK = new Object();
-    private static final Object POWER_LOCK = new Object();
-
-    private static D2xxManager ftdiManager = null;
+    private final Object POWER_LOCK = new Object();
 
     private Context mContext;
-    private String mDeviceSerialNumber = "";
-    private String mRadioHardwareId;
-
+    private RadioValues mRadioValues;
     private RadioDataHandler mDataHandler;
-    private RadioConnection mRadioConnecton;
-    private CallbackHandler mCallbackHandler;
-
-    private volatile long mPreviousTuneTime = 0;
-    private volatile long mPreviousPowerTime = 0;
-
-    private volatile boolean mIsPoweredOn = false;
-    private volatile boolean mIsWaiting = false;
-    private volatile boolean mSeekAll = true;
-
+    private EventHandler mEventHandler;
     private Handler mControlHandler;
-    private RadioController mController = new RadioController() {
+    private RadioDriver mRadioDriver;
+    private volatile long mPreviousTuneTime = 0;        // These longs are only accessed by syncrhonized
+    private volatile long mPreviousPowerTime = 0;       // methods, so atomic access is a given
+    private AtomicReference<PowerStatus> mPowerStatus = new AtomicReference<>(PowerStatus.POWERED_OFF);
+    //private AtomicBoolean mIsPoweredOn = new AtomicBoolean(false);
+    private AtomicBoolean mIsWaiting = new AtomicBoolean(false);
+    private AtomicBoolean mSeekAll = new AtomicBoolean(false);
+
+    private final SetSubchannelRunnable mSetSubchannelRunnable = new SetSubchannelRunnable();
+    private final Runnable mRequestSignalRunnable = new Runnable() {
+        @Override
+        public void run() {
+            // If HD is active, request HD signal strength
+            if (HDRadio.this.mRadioValues.mHdActive.get()) {
+                HDRadio.this.sendRadioCommand(RadioCommand.HD_SIGNAL_STRENGTH,
+                        RadioOperation.GET, null);
+            } else {
+                HDRadio.this.sendRadioCommand(RadioCommand.SIGNAL_STRENGTH,
+                        RadioOperation.GET, null);
+            }
+
+            HDRadio.this.mControlHandler.postDelayed(mRequestSignalRunnable, 10000);
+        }
+    };
+
+    private final RadioDriver.DriverEvents mDriverEvents = new RadioDriver.DriverEvents() {
+        @Override
+        public void onOpened(boolean success) {
+            HDRadio.this.mEventHandler.handleOpenedEvent(success, HDRadio.this.mController);
+        }
+
+        @Override
+        public void onError(RadioError error) {
+            // Send Device Error Callback
+            HDRadio.this.mEventHandler.handleDeviceErrorEvent(error);
+        }
+
+        @Override
+        public void onClosed() {
+            // Post On Closed Callback
+            HDRadio.this.mEventHandler.handleClosedEvent();
+        }
+    };
+
+    private final RadioController mController = new RadioController() {
         @Override
         public void setSeekAll(final boolean seekAll) {
-            synchronized (this) {
-                HDRadio.this.mSeekAll = seekAll;
-            }
+             HDRadio.this.mSeekAll.set(seekAll);
         }
 
         @Override
         public boolean getSeekAll() {
-            synchronized (this) {
-                return HDRadio.this.mSeekAll;
-            }
+            return HDRadio.this.mSeekAll.get();
         }
 
         @Override
@@ -97,10 +119,13 @@ public class HDRadio {
         }
 
         @Override
-        public boolean getPowerStatus() {
-            synchronized (POWER_LOCK) {
-                return HDRadio.this.mIsPoweredOn;
-            }
+        public boolean isPoweredOn() {
+            return HDRadio.this.mPowerStatus.get() == PowerStatus.POWERED_ON;
+        }
+
+        @Override
+        public PowerStatus getPowerStatus() {
+            return HDRadio.this.mPowerStatus.get();
         }
 
         @Override
@@ -139,7 +164,7 @@ public class HDRadio {
                 @Override
                 public void run() {
                     //sendRadioCommand(RadioCommand.VOLUME, RadioOperation.SET, RadioConstant.UP);
-                    int volume = HDRadio.this.mDataHandler.getTrackingVariable(RadioCommand.VOLUME);
+                    int volume = HDRadio.this.mRadioValues.mVolume.get();
                     volume++;
 
                     if (volume <= 90) {
@@ -154,7 +179,7 @@ public class HDRadio {
             HDRadio.this.mControlHandler.post(new Runnable() {
                 @Override
                 public void run() {
-                    int volume = HDRadio.this.mDataHandler.getTrackingVariable(RadioCommand.VOLUME);
+                    int volume = HDRadio.this.mRadioValues.mVolume.get();
                     volume--;
 
                     if (volume >= 0) {
@@ -179,7 +204,7 @@ public class HDRadio {
             HDRadio.this.mControlHandler.post(new Runnable() {
                 @Override
                 public void run() {
-                    int bass = HDRadio.this.mDataHandler.getTrackingVariable(RadioCommand.BASS);
+                    int bass = HDRadio.this.mRadioValues.mBass.get();
                     bass++;
 
                     if (bass <= 90) {
@@ -194,7 +219,7 @@ public class HDRadio {
             HDRadio.this.mControlHandler.post(new Runnable() {
                 @Override
                 public void run() {
-                    int bass =  HDRadio.this.mDataHandler.getTrackingVariable(RadioCommand.TREBLE);
+                    int bass = HDRadio.this.mRadioValues.mBass.get();
                     bass--;
 
                     if (bass >= 0) {
@@ -219,7 +244,7 @@ public class HDRadio {
             HDRadio.this.mControlHandler.post(new Runnable() {
                 @Override
                 public void run() {
-                    int treble = HDRadio.this.mDataHandler.getTrackingVariable(RadioCommand.TREBLE);
+                    int treble = HDRadio.this.mRadioValues.mTreble.get();
                     treble++;
 
                     if (treble <= 90) {
@@ -234,7 +259,7 @@ public class HDRadio {
             HDRadio.this.mControlHandler.post(new Runnable() {
                 @Override
                 public void run() {
-                    int treble = HDRadio.this.mDataHandler.getTrackingVariable(RadioCommand.TREBLE);
+                    int treble = HDRadio.this.mRadioValues.mTreble.get();
                     treble--;
 
                     if (treble >= 0) {
@@ -249,40 +274,18 @@ public class HDRadio {
             HDRadio.this.mControlHandler.post(new Runnable() {
                 @Override
                 public void run() {
+                    // Remove pending Signal Requests
+                    HDRadio.this.mControlHandler.removeCallbacks(mRequestSignalRunnable);
+                    HDRadio.this.mControlHandler.removeCallbacks(mSetSubchannelRunnable);
+
                     HDRadio.this.sendRadioCommand(RadioCommand.TUNE, RadioOperation.SET, tuneInfo);
 
-                    // TODO: not sure that this should be done here
                     final int subchannel = tuneInfo.getSubChannel();
                     if (subchannel > 0) {
-                        HDRadio.this.sendRadioCommand(RadioCommand.HD_SUBCHANNEL, RadioOperation.SET, subchannel);
-
-                        Thread checkHDStreamLockThread = new Thread(new Runnable() {
-                            @Override
-                            public void run() {
-                                long startTime = SystemClock.elapsedRealtime();
-
-                                // HD Streamlock can take time, retry every 100ms for 10 seconds
-                                // to set the subchannel.
-                                while (subchannel != HDRadio.this.mDataHandler
-                                        .getTrackingVariable(RadioCommand.HD_SUBCHANNEL)) {
-
-                                    if (SystemClock.elapsedRealtime() > (STREAM_LOCK_TIMEOUT + startTime)) {
-                                        Log.i(TAG, "Unable to Tune to HD Subchannel: " + subchannel);
-                                        break;
-                                    }
-
-                                    // Try resetting every 200 ms
-                                    try {
-                                        Thread.sleep(200);
-                                    } catch (InterruptedException e) {
-                                        e.printStackTrace();
-                                    }
-                                    HDRadio.this.sendRadioCommand(RadioCommand.HD_SUBCHANNEL, RadioOperation.SET, subchannel);
-                                }
-                            }
-                        });
-                        checkHDStreamLockThread.start();
+                        // Start subchannel requests
+                        HDRadio.this.mSetSubchannelRunnable.setSubchannel(subchannel);
                     }
+
                 }
             });
         }
@@ -292,6 +295,9 @@ public class HDRadio {
             HDRadio.this.mControlHandler.post(new Runnable() {
                 @Override
                 public void run() {
+                    // Remove pending Signal Requests
+                    HDRadio.this.mControlHandler.removeCallbacks(mRequestSignalRunnable);
+                    HDRadio.this.mControlHandler.removeCallbacks(mSetSubchannelRunnable);
                     HDRadio.this.sendRadioCommand(RadioCommand.TUNE, RadioOperation.SET, RadioConstant.UP);
                 }
             });
@@ -302,6 +308,9 @@ public class HDRadio {
             HDRadio.this.mControlHandler.post(new Runnable() {
                 @Override
                 public void run() {
+                    // Remove pending Signal Requests
+                    HDRadio.this.mControlHandler.removeCallbacks(mRequestSignalRunnable);
+                    HDRadio.this.mControlHandler.removeCallbacks(mSetSubchannelRunnable);
                     HDRadio.this.sendRadioCommand(RadioCommand.TUNE, RadioOperation.SET, RadioConstant.DOWN);
                 }
             });
@@ -312,6 +321,7 @@ public class HDRadio {
             HDRadio.this.mControlHandler.post(new Runnable() {
                 @Override
                 public void run() {
+                    HDRadio.this.mControlHandler.removeCallbacks(mSetSubchannelRunnable);
                     HDRadio.this.sendRadioCommand(RadioCommand.HD_SUBCHANNEL, RadioOperation.SET, subChannel);
                 }
             });
@@ -322,6 +332,9 @@ public class HDRadio {
             HDRadio.this.mControlHandler.post(new Runnable() {
                 @Override
                 public void run() {
+                    // Remove pending Signal Requests
+                    HDRadio.this.mControlHandler.removeCallbacks(mRequestSignalRunnable);
+                    HDRadio.this.mControlHandler.removeCallbacks(mSetSubchannelRunnable);
                     HDRadio.this.sendRadioCommand(RadioCommand.SEEK, RadioOperation.SET, RadioConstant.UP);
                 }
             });
@@ -332,6 +345,8 @@ public class HDRadio {
             HDRadio.this.mControlHandler.post(new Runnable() {
                 @Override
                 public void run() {
+                    HDRadio.this.mControlHandler.removeCallbacks(mRequestSignalRunnable);
+                    HDRadio.this.mControlHandler.removeCallbacks(mSetSubchannelRunnable);
                     HDRadio.this.sendRadioCommand(RadioCommand.SEEK, RadioOperation.SET, RadioConstant.DOWN);
                 }
             });
@@ -348,23 +363,41 @@ public class HDRadio {
         }
     };
 
+    // Constructor that defaults to the MJS driver
+    public HDRadio(@NonNull Context context, @NonNull HDRadioEvents callbacks) {
+        this(context, callbacks, DriverType.MJS_DRIVER);
+    }
 
+    // Constructor that allows the user to specifiy their own driver
+    public HDRadio(@NonNull Context context, @NonNull HDRadioEvents callbacks,
+                   @NonNull RadioDriver driver) {
+        this(context, callbacks, DriverType.CUSTOM);
+        this.mRadioDriver = driver;
+        if (!this.mRadioDriver.isInitialized()) {
+            this.mRadioDriver.initialize(mDataHandler, mDriverEvents);
+        }
+    }
 
     /**
      * Constructor for the HDRadio class.
      *
      * @param context       Calling application context
      * @param callbacks     User provided callbacks the callback handler executes
+     * @param dType         Driver Type to use for communication with the HDRadio
      */
-    public HDRadio(@NonNull Context context, @NonNull HDRadioCallbacks callbacks) {
+    public HDRadio(@NonNull Context context, @NonNull HDRadioEvents callbacks,
+                   @NonNull DriverType dType) {
 
         this.mContext = context;
+        this.mRadioPreferences = context.getSharedPreferences(
+                context.getString(R.string.pref_file_key), Context.MODE_PRIVATE);
 
-        // Callback Handler
-        HandlerThread callbackHandlerThread = new HandlerThread("CallbackHandlerThread");
-        callbackHandlerThread.start();
-        Looper callbackLooper = callbackHandlerThread.getLooper();
-        this.mCallbackHandler = new CallbackHandler(callbacks, callbackLooper);
+        this.mRadioValues = new RadioValues();
+
+        HandlerThread eventHandlerThread = new HandlerThread("EventHandlerThread");
+        eventHandlerThread.start();
+        Looper eventLooper = eventHandlerThread.getLooper();
+        this.mEventHandler = new EventHandler(callbacks, eventLooper);
 
         // Control Handler
         HandlerThread controlHandlerThread = new HandlerThread("ControlHandlerThread");
@@ -377,35 +410,56 @@ public class HDRadio {
                 Process.THREAD_PRIORITY_BACKGROUND);
         dataHandlerThread.start();
         Looper dataLooper = dataHandlerThread.getLooper();
-        RadioDataHandler.PowerNotifyCallback powerCb = new RadioDataHandler.PowerNotifyCallback() {
+        RadioDataHandler.DataHandlerEvents dataCbs = new RadioDataHandler.DataHandlerEvents() {
             @Override
             public void onPowerOnReceived() {
                 HDRadio.this.notifyPowerOn();
             }
+
+            @Override
+            public void onTuneReceived() {
+                // TODO: Request HD Subchannel if necessary
+                HDRadio.this.mControlHandler.post(mRequestSignalRunnable);
+            }
         };
-        this.mDataHandler = new RadioDataHandler(dataLooper, this.mCallbackHandler, powerCb);
+        this.mDataHandler = new RadioDataHandler(dataLooper, this.mEventHandler, dataCbs,
+                this.mRadioValues);
+
+        switch (dType) {
+            case MJS_DRIVER:
+                this.mRadioDriver = new MjsRadioDriver(mContext, mDataHandler, mDriverEvents);
+                break;
+            case USB_SERIAL_TEST_DRIVER:
+                // TODO: Implement
+                break;
+            case CUSTOM:
+                Log.i(TAG, "Using custom driver");
+                break;
+            default:
+                this.mRadioDriver = new MjsRadioDriver(mContext, mDataHandler, mDriverEvents);
+                Log.i(TAG, "Invalid Driver Request, use Mjs Driver");
+        }
 
     }
 
-    /**
-     * Attempts to open a HD Radio device.  When the operation is finished the onOpened callback
-     * is executed with the status of the open request.  If the request was successful, a reference
-     * to the controller interface is also sent via the callback, otherwise the controller interface
-     * is set to null.
-     *
-     * @param serialNumber If null, the first matching enumerated device is opened.  Otherwise an
-     *                     attempt is made to open the device by serial number
-     */
-    public void open(final String serialNumber) {
-        ConnectionThread thread = new ConnectionThread(serialNumber);
-        thread.start();
+
+    public void openById(final Object deviceId) {
+        if (!this.isOpen()) {
+            this.mRadioDriver.openById(getDeviceId());
+        } else {
+            Log.i(TAG, "Device already open.");
+        }
     }
 
     /**
      * Open First HDRadioDevice encountered, should only be used if there is only one radio device
      */
-    public void open(){
-        this.open(null);
+    public void open() {
+        if (!this.isOpen()) {
+            this.mRadioDriver.open();
+        } else {
+            Log.i(TAG, "Device already open.");
+        }
     }
 
     public void close() {
@@ -415,57 +469,38 @@ public class HDRadio {
         this.mControlHandler.post(new Runnable() {
             @Override
             public void run() {
-                // TODO: add any other cleanup necessary
-                synchronized (OPEN_LOCK) {
-                    if (HDRadio.this.isOpen()) {
-                        if (HDRadio.this.mIsPoweredOn) {
-                            HDRadio.this.powerOffRadio();
-                        }
 
-                        HDRadio.this.mRadioConnecton.close();
+                if (HDRadio.this.isOpen()) {
+                    if (HDRadio.this.mPowerStatus.get() == PowerStatus.POWERED_ON) {
+                        HDRadio.this.powerOffRadio();
                     }
+
+                    HDRadio.this.mRadioDriver.close();
                 }
 
-                // Post On Closed Callback
-                Message msg = HDRadio.this.mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_ON_CLOSED);
-                HDRadio.this.mCallbackHandler.sendMessage(msg);
             }
         });
     }
 
     public boolean isOpen() {
-        return this.mRadioConnecton != null && this.mRadioConnecton.isOpen();
+        return this.mRadioDriver.isOpen();
     }
 
-    public String getDeviceSerialNumber() {
-        return this.mDeviceSerialNumber;
+    public Object getDeviceId() {
+        return this.mRadioDriver.getIdentifier();
     }
 
     /**
-     * Searches connected USB Devices for the MJS Gadgets HD Radio Cable
+     * Requests a device list from the Driver and returns it
      *
      * @return The matching UsbDevice instance if found, null if not found
      */
-    public ArrayList<UsbDevice> getUsbRadioDevices() {
-        UsbManager manager = (UsbManager) mContext.getSystemService(Context.USB_SERVICE);
-        HashMap<String, UsbDevice> usbDeviceList = manager.getDeviceList();
-        ArrayList<UsbDevice> hdDeviceList = new ArrayList<>(5);
-
-        for (UsbDevice uDevice : usbDeviceList.values()) {
-            if ((uDevice.getVendorId() == 1027) && (uDevice.getProductId() == 37752)) {
-                Log.v(TAG, "MJS Gadgets HD Radio Cable found");
-                hdDeviceList.add(uDevice);
-            }
-        }
-        if (hdDeviceList.isEmpty()) {
-            Log.v(TAG, "MJS Gadgets HD Radio Cable not found");
-        }
-        return hdDeviceList;
+    public ArrayList<Object> getDeviceList() {
+        return this.mRadioDriver.getDeviceList();
     }
 
     private synchronized void notifyPowerOn() {
-        if (this.mIsWaiting) {
-            this.mIsWaiting = false;
+        if (this.mIsWaiting.compareAndSet(true, false)) {
             notify();
         }
     }
@@ -482,7 +517,8 @@ public class HDRadio {
                 return;
             }
 
-            long powerDelay = (this.mPreviousPowerTime + POWER_TOGGLE_DELAY) - SystemClock.elapsedRealtime();
+            long powerDelay = (this.mPreviousPowerTime + POWER_TOGGLE_DELAY)
+                    - SystemClock.elapsedRealtime();
             if (powerDelay > 0) {
                 // sleep
                 try {
@@ -494,60 +530,82 @@ public class HDRadio {
                 }
             }
 
-            if (!this.mIsPoweredOn) {
+            if (this.mPowerStatus.compareAndSet(PowerStatus.POWERED_OFF, PowerStatus.POWERING_ON)) {
 
                 // Set the hardware mute so speakers dont get blown by the initial power on
-                this.mRadioConnecton.raiseRTS();
+                this.mRadioDriver.raiseRts();
 
                 // Raise DTR to power on
-                this.mRadioConnecton.raiseDTR();
+                this.mRadioDriver.raiseDtr();
 
                 // Wait until the radio gives a power on response, with a 10 second timeout
                 synchronized (this) {
                     try {
-                        this.mIsWaiting = true;
+                        this.mIsWaiting.set(true);
                         wait(10000);
                     } catch (InterruptedException e) {
                         e.printStackTrace();
                     }
                 }
 
-                this.mIsPoweredOn = true;
-
-                // sleep for 1s after receiving power on confirmation
-                try {
-                    Thread.sleep(1000);
-                } catch (InterruptedException e) {
-                    Log.w(TAG, e.getMessage());
+                if (this.mIsWaiting.get()) {
+                    //TODO: the timeout was met, this is an error.  Send an error callback
+                    return;
                 }
 
-                // release RTS (hardware mute)
-                this.mRadioConnecton.clearRTS();
-
-                if (DEBUG) {
-                    sendRadioCommand(RadioCommand.HD_UNIQUE_ID, RadioOperation.GET, null);
-                    sendRadioCommand(RadioCommand.HD_HW_VERSION, RadioOperation.GET, null);
-                    sendRadioCommand(RadioCommand.HD_API_VERSION, RadioOperation.GET, null);
-                    /*sendRadioCommand(RadioCommand.HD_ENABLE_HD_TUNER, RadioOperation.GET, null);
-                    sendRadioCommand(RadioCommand.VOLUME, RadioOperation.GET, null);
-                    sendRadioCommand(RadioCommand.MUTE, RadioOperation.GET, null);
-                    sendRadioCommand(RadioCommand.BASS, RadioOperation.GET, null);
-                    sendRadioCommand(RadioCommand.TREBLE, RadioOperation.GET, null);
-                    sendRadioCommand(RadioCommand.COMPRESSION, RadioOperation.GET, null);
-                    sendRadioCommand(RadioCommand.HD_ACTIVE, RadioOperation.GET, null);
-                    sendRadioCommand(RadioCommand.TUNE, RadioOperation.GET, null);*/
-                }
-
-                // Dispatch power on callback
-                Message msg = this.mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_POWER_ON);
-                this.mCallbackHandler.sendMessage(msg);
+                this.initializeRadio();
 
             }
 
-            mPreviousPowerTime = SystemClock.elapsedRealtime();
+            this.mPreviousPowerTime = SystemClock.elapsedRealtime();
         }
 
     }
+
+    /**
+     * Called after every power on.  Requests hardware ids, sets persisted volume, treble, bass
+     * and Tune.
+     */
+    private void initializeRadio() {
+        this.mPowerStatus.set(PowerStatus.INITIALIZING);
+
+        // sleep for 1s after receiving power on confirmation
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            Log.w(TAG, e.getMessage());
+        }
+
+
+        // release RTS (hardware mute)
+        this.mRadioDriver.clearRts();
+
+        // Dispatch power on callback
+        this.mEventHandler.handlePowerOnEvent();
+
+
+        // Retreived persistent values
+        this.mSeekAll.set(this.mRadioPreferences.getBoolean("radiolib_pref_key_seekall", true));
+        int frequency = this.mRadioPreferences.getInt("radiolib_pref_key_frequency", 879);
+        RadioBand band = RadioBand.valueOf(this.mRadioPreferences
+                .getString("radiolib_pref_key_band", "FM"));
+        int subch = this.mRadioPreferences.getInt("radiolib_pref_key_subchannel", 0);
+        TuneInfo savedTune = new TuneInfo(band, frequency, subch);
+        int volume = this.mRadioPreferences.getInt("radiolib_pref_key_volume", 50);
+        int bass = this.mRadioPreferences.getInt("radiolib_pref_key_bass", 15);
+        int treble = this.mRadioPreferences.getInt("radiolib_pref_key_treble", 15);
+
+        this.mController.requestUpdate(RadioCommand.HD_UNIQUE_ID);
+        this.mController.requestUpdate(RadioCommand.HD_HW_VERSION);
+        this.mController.requestUpdate(RadioCommand.HD_API_VERSION);
+        this.mController.setVolume(volume);
+        this.mController.setBass(bass);
+        this.mController.setTreble(treble);
+        this.mController.tune(savedTune);
+
+        this.mPowerStatus.set(PowerStatus.POWERED_ON);
+    }
+
 
     /**
      * Powers off the Radio.  Although it should only be called from mControlHandler's looper,
@@ -567,13 +625,30 @@ public class HDRadio {
                 }
             }
 
-            if (this.isOpen() && this.mIsPoweredOn) {
-                this.mRadioConnecton.clearDTR();   // DTR off = Power off
-                this.mIsPoweredOn = false;
+            if (this.isOpen() && this.mPowerStatus.compareAndSet(PowerStatus.POWERED_ON,
+                    PowerStatus.POWERING_OFF)) {
+
+                this.mRadioDriver.clearDtr();   // DTR off = Power off
+
+                // Because the radio won't send a power off reply, set the power off variable to false
+                this.mRadioValues.mPower.set(false);
+
+                // Persist these values
+                TuneInfo currentTune = this.mRadioValues.mTune.get();
+                this.mRadioPreferences.edit()
+                        .putBoolean("radiolib_pref_key_seekall", this.mSeekAll.get())
+                        .putInt("radiolib_pref_key_frequency", currentTune.getFrequency())
+                        .putString("radiolib_pref_key_band", currentTune.getBand().toString())
+                        .putInt("radiolib_pref_key_subchannel", currentTune.getSubChannel())
+                        .putInt("radiolib_pref_key_volume", this.mRadioValues.mVolume.get())
+                        .putInt("radiolib_pref_key_bass", this.mRadioValues.mBass.get())
+                        .putInt("radiolib_pref_key_treble", this.mRadioValues.mTreble.get())
+                        .apply();
+
+                this.mPowerStatus.set(PowerStatus.POWERED_OFF);
 
                 // Dispatch power off callback
-                Message msg = this.mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_POWER_OFF);
-                this.mCallbackHandler.sendMessage(msg);
+                this.mEventHandler.handlePowerOffEvent();
             }
 
             this.mPreviousPowerTime = SystemClock.elapsedRealtime();
@@ -589,8 +664,8 @@ public class HDRadio {
      * @param data          Accompanying data (can be null for GET commands)
      */
     private void sendRadioCommand(RadioCommand command, RadioOperation operation, Object data) {
-        byte[] radioPacket = RadioPacketBuilder.buildRadioPacket(command, operation, data, mSeekAll);
-        if (radioPacket != null && this.mRadioConnecton != null) {
+        byte[] radioPacket = RadioPacketBuilder.buildRadioPacket(command, operation, data, mSeekAll.get());
+        if (radioPacket != null && this.mRadioDriver.isOpen()) {
             // Do not allow any command to execute within 1 second of a direct tune
             long tuneDelay = (this.mPreviousTuneTime + POST_TUNE_DELAY) - SystemClock.elapsedRealtime();
             if (tuneDelay > 0) {
@@ -605,8 +680,7 @@ public class HDRadio {
                 }
             }
 
-            this.mRadioConnecton.writeData(radioPacket);
-
+            this.mRadioDriver.writeData(radioPacket);
 
             // If a tune command with a tuneInfo object was received, it is a direct tune.
             // Set the timer, as direction tunes require more time to lock
@@ -614,194 +688,42 @@ public class HDRadio {
                 this.mPreviousTuneTime = SystemClock.elapsedRealtime();
             }
 
-            // Always sleep 100ms between commands
+            // Always sleep between commands
             try {
-                Thread.sleep(100);
+                Thread.sleep(POST_COMMAND_DELAY);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
         } else {
             Log.i(TAG, "Invalid Radio Packet, cannot send");
         }
-
     }
 
+    private class SetSubchannelRunnable implements Runnable {
 
-    // TODO: Implement Query Device / Open by Hardware ID (Should probably create a HDRadioManger class for this)
+        private int mRequestedSubchannel = 0 ;
+        private int mRequestCount = 0;
 
-    /**
-     * Class to connect to MJS Gadgets HD Radio cable.  It extends Thread because this thread needs
-     * to run in the foreground.  All other threads launched in the HDRadio class can be Runnables
-     * managed by the ExecutorService, which run in the background.
-     */
-    private class ConnectionThread extends Thread {
+        SetSubchannelRunnable() {}
 
-        private String mRequestedSerialNumber;
-        private volatile boolean mIsWaiting = false;
-        private volatile boolean mUsbRequestGranted;
-
-        private BroadcastReceiver usbRequestReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                String action = intent.getAction();
-                if (action.equals(ACTION_USB_PERMISSION)) {
-                    synchronized (this) {
-                        ConnectionThread.this.mUsbRequestGranted =
-                                intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false);
-                        ConnectionThread.this.resumeThread();
-                    }
-                }
-
-            }
-        };
-
-        ConnectionThread(String serialNumber) {
-            this.mRequestedSerialNumber = serialNumber;
+        public void setSubchannel(int subchannel) {
+            this.mRequestedSubchannel = subchannel;
+            this.mRequestCount = 0;
+            HDRadio.this.mControlHandler.post(this);
         }
 
-        private synchronized void resumeThread() {
-            if (this.mIsWaiting) {
-                this.mIsWaiting = false;
-                notify();
-            }
-        }
 
         @Override
         public void run() {
-            synchronized (OPEN_LOCK) {
-                // TODO: should possibly put this somewhere else
-                if (ftdiManager == null) {
-                    try {
-                        ftdiManager = D2xxManager.getInstance(HDRadio.this.mContext);
-                    } catch (D2xxManager.D2xxException e) {
-                        Log.e(TAG, "Unable to retreive instance of FTDI Manager");
+            if (this.mRequestedSubchannel > 0 &&
+                    this.mRequestedSubchannel != HDRadio.this.mRadioValues.mHdSubchannel.get()) {
+                HDRadio.this.sendRadioCommand(RadioCommand.HD_SUBCHANNEL, RadioOperation.SET, mRequestedSubchannel);
+                mRequestCount++;
 
-                        // Dispatch On Opened Callback
-                        Message msg = HDRadio.this.mCallbackHandler
-                                .obtainMessage(CallbackHandler.CALLBACK_ON_OPENED);
-                        msg.arg1 = 0;  // Open fail
-                        HDRadio.this.mCallbackHandler.sendMessage(msg);
-                        return;
-                    }
-                    // Add MJS Gadgets cable to the D2XX driver's compatible device list
-                    ftdiManager.setVIDPID(1027, 37752);
-
+                // Send a new request every .5 seconds, up to 10 times
+                if (mRequestCount < 10) {
+                    HDRadio.this.mControlHandler.postDelayed(this, 500);
                 }
-
-                if (HDRadio.this.isOpen()) {
-                    Log.i(TAG, "Radio already open");
-                    // Dispatch On Opened Callback
-                    Message msg = HDRadio.this.mCallbackHandler
-                            .obtainMessage(CallbackHandler.CALLBACK_ON_OPENED);
-                    msg.arg1 = 1;  // Open success
-                    msg.obj = HDRadio.this.mController;
-                    HDRadio.this.mCallbackHandler.sendMessage(msg);
-                    return;
-                }
-
-                // Register USB permission receiver
-                IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
-                HDRadio.this.mContext.registerReceiver(usbRequestReceiver, filter);
-
-                UsbManager usbManager = (UsbManager)(HDRadio.this.mContext).getSystemService(Context.USB_SERVICE);
-                ArrayList<UsbDevice> hdDeviceList = HDRadio.this.getUsbRadioDevices();
-                if (hdDeviceList.isEmpty()) {
-                    // Dispatch On Opened Callback
-                    Message msg = HDRadio.this.mCallbackHandler
-                            .obtainMessage(CallbackHandler.CALLBACK_ON_OPENED);
-                    msg.arg1 = 0;  // Open fail
-                    HDRadio.this.mCallbackHandler.sendMessage(msg);
-                } else {
-
-                    FT_Device ftdev = null;
-                    // Iterate through the list of compatible radio devices, comparing serial numbers if necessary
-                    for (UsbDevice hdRadioDev : hdDeviceList) {
-                        if (!usbManager.hasPermission(hdRadioDev)) {
-                            this.mUsbRequestGranted = false;
-                            // request permission and wait
-                            PendingIntent pi = PendingIntent.getBroadcast(HDRadio.this.mContext,
-                                    0, new Intent(ACTION_USB_PERMISSION), 0);
-                            usbManager.requestPermission(hdRadioDev, pi);
-
-                            synchronized (this) {
-                                try {
-                                    this.mIsWaiting = true;
-                                    wait();
-                                } catch (InterruptedException e) {
-                                    e.printStackTrace();
-                                }
-                            }
-
-                            if (!this.mUsbRequestGranted) {
-                                Log.i(TAG, "Usb Permission not granted to device: " + hdRadioDev.getDeviceName());
-                                break;
-                            }
-                        }
-
-                        // Need to add the usb device to the D2xxManager.  This happens automatically
-                        // with plug events while the app is running.  Otherwise the need to either
-                        // be enumerated via D2xxManager.createDeviceInfoList() or added directly
-                        // like below
-                        //
-                        // If its already there it wont' be duplicated.
-                        if (ftdiManager.addUsbDevice(hdRadioDev) < 1) {
-                            Log.i(TAG, "Device was not added");
-                        }
-
-                        ftdev = ftdiManager.openByUsbDevice(HDRadio.this.mContext, hdRadioDev);
-                        if (ftdev != null && ftdev.isOpen()) {
-                            if (mRequestedSerialNumber == null) {
-                                break;
-                            } else {
-                                String devSerialNumber = ftdev.getDeviceInfo().serialNumber;
-                                if (mRequestedSerialNumber.equals(devSerialNumber)) {
-                                    break;
-                                } else {
-                                    ftdev.close();
-                                    ftdev = null;
-                                    Log.i(TAG, "Requested serial number " + mRequestedSerialNumber + " does not " +
-                                            "match device serial number " + devSerialNumber);
-                                }
-                            }
-                        } else {
-                            Log.i(TAG, "Unable to open device: " + hdRadioDev.getDeviceName());
-                            ftdev = null;
-                        }
-
-                    }
-
-                    // If the device was found and opened, initialize and create connection
-                    if (ftdev != null) {
-
-                        HDRadio.this.mDeviceSerialNumber = ftdev.getDeviceInfo().serialNumber;
-                        ftdev.setBitMode((byte) 0, D2xxManager.FT_BITMODE_RESET);
-                        ftdev.setBaudRate(115200);
-                        ftdev.setDataCharacteristics(D2xxManager.FT_DATA_BITS_8,
-                                D2xxManager.FT_STOP_BITS_1, D2xxManager.FT_PARITY_NONE);
-                        ftdev.setFlowControl(D2xxManager.FT_FLOW_NONE, (byte) 0x0b, (byte) 0x0d);
-                        ftdev.clrDtr(); // Don't power on
-                        ftdev.setRts(); // Raise the RTS to turn on hardware mute
-
-                        // create radio connection
-                        HDRadio.this.mRadioConnecton = new RadioConnection(ftdev,
-                                HDRadio.this.mDataHandler, HDRadio.this.mCallbackHandler);
-
-                        // Dispatch On Opened Callback
-                        Message msg = HDRadio.this.mCallbackHandler
-                                .obtainMessage(CallbackHandler.CALLBACK_ON_OPENED);
-                        msg.arg1 = 1;  // Open success
-                        msg.obj = HDRadio.this.mController;
-                        HDRadio.this.mCallbackHandler.sendMessage(msg);
-                    } else {
-                        // Dispatch On Opened Callback
-                        Message msg = HDRadio.this.mCallbackHandler
-                                .obtainMessage(CallbackHandler.CALLBACK_ON_OPENED);
-                        msg.arg1 = 0;  // Open fail
-                        HDRadio.this.mCallbackHandler.sendMessage(msg);
-                    }
-                }
-
-                HDRadio.this.mContext.unregisterReceiver(usbRequestReceiver);
             }
         }
     }

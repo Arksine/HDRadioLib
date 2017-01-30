@@ -1,5 +1,6 @@
 package com.arksine.hdradiolib;
 
+import com.arksine.hdradiolib.enums.PowerStatus;
 import com.arksine.hdradiolib.enums.RadioCommand;
 
 /**
@@ -12,7 +13,8 @@ public interface RadioController {
 
     void powerOn();
     void powerOff();
-    boolean getPowerStatus();
+    boolean isPoweredOn();
+    PowerStatus getPowerStatus();
 
     void muteOn();
     void muteOff();

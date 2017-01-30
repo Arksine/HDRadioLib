@@ -1,4 +1,4 @@
-package com.arksine.hdradiolib;
+package com.arksine.hdradiolib.basicexample;
 
 import android.os.Process;
 

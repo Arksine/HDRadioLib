@@ -25,6 +25,12 @@ import com.arksine.hdradiolib.enums.RadioCommand;
 public class TextSwapAnimator {
     private static final String TAG = TextSwapAnimator.class.getSimpleName();
 
+    private static final int DEFAULT_FADE_DURATION = 2000;  // 2 seconds
+    private static final int DEFAULT_DELAY_AFTER_FADE = 0;
+    private static final int DEFAULT_DISPLAY_DURATON = 3000;
+    private static final int DEFAULT_SCROLL_DURATION = 5000;
+    private static final int DEFAULT_MAX_WIDTH_MULTIPLIER = 2;
+
     private Handler mAnimationHandler;
     private final SparseArray<String> mInfoItems = new SparseArray<>(4);
     private TextView mTextView;
@@ -34,7 +40,7 @@ public class TextSwapAnimator {
     private int mIndex = 0;
     private int mCapacity = 1;          // should always have atleast
     private int mFadeDuration;
-    private int mDelayDuration;
+    private int mDelayAfterFade;
     private int mDisplayDuration;
     private int mScrollDuration;
     private boolean mAnimationStarted = false;
@@ -45,19 +51,20 @@ public class TextSwapAnimator {
     private ObjectAnimator mTextScrollAnimation;
 
     public TextSwapAnimator(TextView infoTextView) {
-        this(infoTextView, 2000, 1000, 3000);
+        this(infoTextView, DEFAULT_FADE_DURATION, DEFAULT_DELAY_AFTER_FADE,
+                DEFAULT_DISPLAY_DURATON, DEFAULT_SCROLL_DURATION);
 
     }
 
-    public TextSwapAnimator(TextView infoTextView, int fadeDuration, int delayBetweenItems,
-                            int displayDuration) {
+    public TextSwapAnimator(TextView infoTextView, int fadeDuration, int delayAfterFade,
+                            int displayDuration, int scrollDuration) {
 
         mAnimationHandler = new Handler();
         mTextView = infoTextView;
         mFadeDuration = fadeDuration;
-        mDelayDuration = delayBetweenItems;
+        mDelayAfterFade = delayAfterFade;
         mDisplayDuration = displayDuration;
-        mScrollDuration = 5000;  // This should be set programatically
+        mScrollDuration = scrollDuration;
         mScrollViewWidth = 1000;  // just a default width that should change
 
         initializeArray();
@@ -66,6 +73,11 @@ public class TextSwapAnimator {
 
     public void setScrollViewWidth(int width) {
         mScrollViewWidth = width;
+
+        // update the text view
+        ViewGroup.LayoutParams params = mTextView.getLayoutParams();
+        params.width = mScrollViewWidth;
+        mTextView.setLayoutParams(params);
     }
 
     private void initializeArray() {
@@ -140,9 +152,18 @@ public class TextSwapAnimator {
 
                     mCurrentString = mInfoItems.get(mIndex);
                     mTextView.setText(mCurrentString);
-                    setupScrollAnimation();
+                    checkViewWidth();
 
-                    mFadeInAnimation.start();
+                    if (mDelayAfterFade > 0) {
+                        mAnimationHandler.postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                mFadeInAnimation.start();
+                            }
+                        }, mDelayAfterFade);
+                    } else {
+                        mFadeInAnimation.start();
+                    }
                 }
             }
         });
@@ -168,7 +189,7 @@ public class TextSwapAnimator {
         });
     }
 
-    private void setupScrollAnimation() {
+    private void checkViewWidth() {
         Paint textPaint = mTextView.getPaint();
         String text = mTextView.getText().toString();
         int textWidth = Math.round(textPaint.measureText(text));
@@ -180,6 +201,10 @@ public class TextSwapAnimator {
             mTextView.setLayoutParams(params);
             mWillScroll = false;
         } else {
+
+            if (textWidth >= DEFAULT_MAX_WIDTH_MULTIPLIER * mScrollViewWidth) {
+                // chop off 1/4 of the current item's string
+            }
 
             params.width = textWidth;
             mTextView.setLayoutParams(params);

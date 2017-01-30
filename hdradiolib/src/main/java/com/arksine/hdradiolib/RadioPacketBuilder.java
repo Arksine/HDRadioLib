@@ -53,7 +53,7 @@ class RadioPacketBuilder {
             return null;
         }
 
-        // TODO: The code below could be done in the write function of RadioConnection, since that is essentially an output
+        // TODO: The code below could be done in the write function of MjsRadioDriver, since that is essentially an output
         //       stream as well.  Would be faster, as I would only have to write to one steam instead of two.
 
         // The built packet must be parsed and added so the checksum can be calculated

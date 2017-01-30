@@ -18,9 +18,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ToggleButton;
 
-import com.arksine.hdradiolib.BackgroundThreadFactory;
 import com.arksine.hdradiolib.HDRadio;
-import com.arksine.hdradiolib.HDRadioCallbacks;
+import com.arksine.hdradiolib.HDRadioEvents;
 import com.arksine.hdradiolib.HDSongInfo;
 import com.arksine.hdradiolib.RadioController;
 import com.arksine.hdradiolib.TuneInfo;
@@ -35,6 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class RadioActivity extends AppCompatActivity {
     private static final String TAG = RadioActivity.class.getSimpleName();
+
 
     // Radio Library Members
     private HDRadio mHdRadio;
@@ -84,7 +84,7 @@ public class RadioActivity extends AppCompatActivity {
 
         initViews();
         mTextSwapAnimator = new TextSwapAnimator(mRadioInfoText);
-        mClearViewsRunnable.run();
+        mClearViewsRunnable.run();  // TODO: should I do this after setupScrollView in onResume?
 
         mHdRadio.open();
     }
@@ -124,7 +124,7 @@ public class RadioActivity extends AppCompatActivity {
      * Setup HdRadio instance with the appropriate Callbacks
      */
     private void buildRadioInstance() {
-        HDRadioCallbacks callbacks = new HDRadioCallbacks() {
+        HDRadioEvents callbacks = new HDRadioEvents() {
             @Override
             public void onOpened(boolean openSuccess, RadioController controller) {
                 if (!openSuccess) {
@@ -144,8 +144,7 @@ public class RadioActivity extends AppCompatActivity {
                     mIsConnected.set(true);
 
                     // enable the power button
-                    mPowerButton.setEnabled(true);
-                    mPowerButton.setClickable(true);
+                    togglePowerButton(true);
                 }
 
             }
@@ -196,9 +195,7 @@ public class RadioActivity extends AppCompatActivity {
                 mIsPoweredOn.set(true);
 
                 // enable the power button
-                mPowerButton.setEnabled(true);
-                mPowerButton.setClickable(true);
-
+                togglePowerButton(true);
                 runOnUiThread(mInitializeRadio);
             }
 
@@ -207,8 +204,7 @@ public class RadioActivity extends AppCompatActivity {
                 mIsPoweredOn.set(false);
 
                 // enable the power button
-                mPowerButton.setEnabled(true);
-                mPowerButton.setClickable(true);
+                togglePowerButton(true);
                 runOnUiThread(mClearViewsRunnable);
             }
 
@@ -566,7 +562,7 @@ public class RadioActivity extends AppCompatActivity {
                         tmpFreq = String.format(Locale.US, "%1$.1f FM",
                                 seekInfo.getFrequency() / 10f);
                     } else {
-                        tmpFreq = String.format(Locale.US, "%1$d AM", mCurrentFrequency);
+                        tmpFreq = String.format(Locale.US, "%1$d AM", seekInfo.getFrequency());
                     }
                     mRadioFreqText.setText(tmpFreq);
                 }
@@ -625,6 +621,18 @@ public class RadioActivity extends AppCompatActivity {
         }
     };
 
+    // Allows the power button to be toggled outside of the UI thread
+    private void togglePowerButton(final boolean status) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                mPowerButton.setEnabled(status);
+                mPowerButton.setClickable(status);
+            }
+        });
+    }
+
+
 
     // Runnables
 
@@ -632,7 +640,7 @@ public class RadioActivity extends AppCompatActivity {
      * Sets initial radio vars.  Should only be called after the radio has been
      * powered on.
      *
-     * TODO: this functionality should move to the libarary along with HDRadioValues
+     * TODO: this functionality should move to the libarary along with RadioValues
      */
     private Runnable mInitializeRadio = new Runnable() {
         @Override
@@ -670,6 +678,9 @@ public class RadioActivity extends AppCompatActivity {
             mIsRequestingSignal.set(false);
         }
     };
+
+    // TODO: The library should request signal after a tune. That way I can syncrhonize access.
+    // Launch the runnable after a tune,  stop the runnable prior to executing a tune or seek request
 
     /**
      * Loops in another thread, requesting signal status every 10 seconds

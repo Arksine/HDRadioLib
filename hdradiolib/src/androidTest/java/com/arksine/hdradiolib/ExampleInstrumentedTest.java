@@ -31,39 +31,7 @@ public class ExampleInstrumentedTest {
     public void instantiateHDRadio() throws Exception {
         Context appContext = InstrumentationRegistry.getTargetContext();
 
-        HDRadioCallbacks cbs = new HDRadioCallbacks() {
-            @Override
-            public void onOpened(boolean openSuccess, RadioController controller) {
 
-            }
-
-            @Override
-            public void onClosed() {
-
-            }
-
-            @Override
-            public void onDeviceError(RadioError error) {
-
-            }
-
-            @Override
-            public void onRadioPowerOn() {
-
-            }
-
-            @Override
-            public void onRadioPowerOff() {
-
-            }
-
-            @Override
-            public void onRadioDataReceived(RadioCommand key, Object value) {
-
-            }
-        };
-
-        HDRadio hdRadio = new HDRadio(appContext, cbs);
 
         assertEquals("com.arksine.hdradiolib.test", appContext.getPackageName());
     }

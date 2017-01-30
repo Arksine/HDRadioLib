@@ -12,9 +12,9 @@ import android.os.Parcelable;
 public enum RadioError implements Parcelable {
     DATA_READ_ERROR,
     DATA_WRITE_ERROR,
-    RTS_SET_ERROR,
+    RTS_RAISE_ERROR,
     RTS_CLEAR_ERROR,
-    DTR_SET_ERROR,
+    DTR_RAISE_ERROR,
     DTR_CLEAR_ERROR,
     CONNECTION_ERROR;
 

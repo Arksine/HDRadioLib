@@ -30,60 +30,33 @@ class RadioDataHandler extends Handler {
     private boolean mIsLengthByte = false;
     private boolean mPacketStarted = false;
 
-    // Tracking variables necessary to implement some of the Radio Interface functionality.  They
-    // Will be accessed from multiple threads, so they need to be volatile
-    private volatile int volume = 0;
-    private volatile int bass = 0;
-    private volatile int treble = 0;
-    private volatile int subchannel = 0;
 
-    private Handler mCallbackHandler;
+    private EventHandler mEventHandler;
+    private RadioValues mRadioValues;
 
     /**
-     * The interface below is a callback for the main HDRadio class, notifying it that
-     * a power on reply was recieved.  This is necessary to correctly time commands after power
-     * on.
+     * The interface below is a callback for the main HDRadio class, notifying it when
+     * a power on reply was recieved, and also when the radio has been tuned.
      */
-    interface PowerNotifyCallback {
+    interface DataHandlerEvents {
         void onPowerOnReceived();
+        void onTuneReceived();
     }
-    PowerNotifyCallback powerCb;
+
+    private DataHandlerEvents mDataHandlerEvents;
 
 
-    RadioDataHandler(@NonNull Looper looper, @NonNull Handler cbHandler,
-                     @NonNull PowerNotifyCallback pcb) {
+    RadioDataHandler(@NonNull Looper looper, @NonNull EventHandler eventHandler,
+                     @NonNull DataHandlerEvents handlerEvents, RadioValues values) {
         super(looper);
-        this.mCallbackHandler = cbHandler;
-        this.powerCb = pcb;
-    }
-
-    /**
-     * Retreives variables necessary to implement RadioController functionality.  For example,
-     * to implement volumeUp, I need to know what the current volume level is.  This class is
-     * syncrhonized to prevent threads from simultaneously reading and writing to variables.
-     *
-     * @param command   The requested value's related command
-     * @return          The value requested
-     */
-    public synchronized int getTrackingVariable(@NonNull RadioCommand command) {
-        switch (command) {
-            case VOLUME:
-                return this.volume;
-            case BASS:
-                return this.bass;
-            case TREBLE:
-                return this.treble;
-            case HD_SUBCHANNEL:
-                return this.subchannel;
-            default:
-                Log.e(TAG, "Variable not tracked: " + command.toString());
-                return -1;
-        }
+        this.mEventHandler = eventHandler;
+        this.mDataHandlerEvents = handlerEvents;
+        this.mRadioValues = values;
     }
 
     @Override
     public void handleMessage(Message msg) {
-        parseIncomingBytes((byte[])msg.obj);
+        parseIncomingBytes((byte[]) msg.obj);
     }
 
     private void parseIncomingBytes(byte[] incomingBytes) {
@@ -102,7 +75,7 @@ class RadioDataHandler extends Handler {
          */
 
         for (byte b : incomingBytes) {
-            if ((b == (byte)0xA4)) {
+            if ((b == (byte) 0xA4)) {
                 // Header received, start new packet
 
                 if (this.mPacketStarted) {
@@ -116,9 +89,9 @@ class RadioDataHandler extends Handler {
                 this.mIsLengthByte = true;
                 this.mPacketCheckSum = (b & 0xFF);
                 this.mIsEscaped = false;   // just in case a header is read directly after escape byte
-            } else if(!this.mPacketStarted) {
+            } else if (!this.mPacketStarted) {
                 Log.v(TAG, "Byte received without a start header, discarding");
-            } else if (b == (byte)0x1B && !this.mIsEscaped) {
+            } else if (b == (byte) 0x1B && !this.mIsEscaped) {
                 // Escape byte received
                 this.mIsEscaped = true;
             } else {
@@ -127,7 +100,7 @@ class RadioDataHandler extends Handler {
                     if (DEBUG)
                         Log.v(TAG, "Escaped char: " + String.format("%02X", b));
 
-                    if (b == (byte)0x48) {
+                    if (b == (byte) 0x48) {
                         // 0x48 is escaped as 0xA4
                         b = (byte) 0xA4;
                     }
@@ -186,7 +159,7 @@ class RadioDataHandler extends Handler {
         ByteBuffer msgBuf = ByteBuffer.wrap(radioPacket);
         msgBuf.order(ByteOrder.LITTLE_ENDIAN);
         int messageCmd = msgBuf.getShort();
-        int messageOp =  msgBuf.getShort();
+        int messageOp = msgBuf.getShort();
 
         if (messageOp != RadioOperation.REPLY.getByteValueAsInt()) {
             Log.i(TAG, "Message is not a reply, discarding");
@@ -199,149 +172,292 @@ class RadioDataHandler extends Handler {
             return;
         }
 
+        if (msgBuf.remaining() < 4) {
+            Log.e(TAG, "Error, not enough bytes in buffer");
+            return;
+        }
 
-        // Process packet by data type
-        RadioCommand.Type dataType = command.getType();
-        Message msg = this.mCallbackHandler.obtainMessage(CallbackHandler.CALLBACK_DATA_RECEIVED);
-        msg.arg1 = command.ordinal();
-        switch (dataType) {
-            case INT: {
-                int intValue;
-                intValue = msgBuf.getInt();
+        if (DEBUG)
+            Log.d(TAG, "Received Command: " + command.toString());
 
-                if (DEBUG)
-                    Log.v(TAG, command.toString() + " value: " + intValue);
+        switch (command) {
+            case POWER: {
+                Boolean power = this.parseBoolean(msgBuf);
+                if (power != null) {
+                    // If power was off and it is now on, send a power on event
+                    if (!this.mRadioValues.mPower.get() && power) {
+                        this.mDataHandlerEvents.onPowerOnReceived();
+                    }
 
-
-                // TODO: might be better to just let calling activities handle this and
-                // implement
-
-                // Track a few values required to present user with certain operations
-                switch (command) {
-                    case VOLUME:
-                        synchronized (this) {
-                            this.volume = intValue;
-                        }
-                        break;
-                    case BASS:
-                        synchronized (this) {
-                            this.bass = intValue;
-                        }
-                        break;
-                    case TREBLE:
-                        synchronized (this) {
-                            this.treble = intValue;
-                        }
-                        break;
-                    case HD_SUBCHANNEL:
-                        synchronized (this) {
-                            this.subchannel = intValue;
-                        }
-                        break;
+                    this.mRadioValues.mPower.set(power);
                 }
-
-                // Dispatch callback with command and data
-                msg.obj = intValue;
-                this.mCallbackHandler.sendMessage(msg);
                 break;
             }
-            case BOOLEAN: {
-                // Boolean's are received as 4 bytes, 0 is false 1 is true.
-                int boolValue = msgBuf.getInt();
-                boolean status;
-                if (boolValue == 1) {
-                    status = true;
-                } else if (boolValue == 0) {
-                    status = false;
-                } else {
-                    Log.i(TAG, "Invalid boolean value: " + boolValue);
-                    return;
+            case MUTE: {
+                Boolean mute = this.parseBoolean(msgBuf);
+                if (mute != null) {
+                    // Store the variable
+                    this.mRadioValues.mMute.set(mute);
+                    this.mEventHandler.handleMuteEvent(mute);
                 }
-
-                // Notify the HDRadio class that a Power ON reply was received
-                if (command == RadioCommand.POWER && status) {
-                    powerCb.onPowerOnReceived();
-                }
-
-                // Dispatch callback with command and data
-                msg.obj = status;
-                this.mCallbackHandler.sendMessage(msg);
                 break;
             }
-            case STRING: {
-                // Get length of the string
-                int strLength = msgBuf.getInt();
-
-                if (strLength != msgBuf.remaining()) {
-                    Log.i(TAG, "String Length received does not match remaining bytes in buffer");
-                    strLength = msgBuf.remaining();
-                }
-
-                String strMsg;
-                byte[] stringBytes;
-                if (strLength == 0) {
-                    strMsg = "";
-                } else {
-                    stringBytes = new byte[strLength];
-                    msgBuf.get(stringBytes);
-                    strMsg = new String(stringBytes);
-                }
-
-                if (DEBUG)
-                    Log.d(TAG, "Length: " + strLength + "\nConverted String: \n" + strMsg);
-
-                // Dispatch callback with command and data
-                msg.obj = strMsg;
-                this.mCallbackHandler.sendMessage(msg);
+            case SIGNAL_STRENGTH: {
+                int signal = this.parseInteger(msgBuf);
+                this.mRadioValues.mSignalStrength.set(signal);
+                this.mEventHandler.handleSignalStrengthEvent(signal);
                 break;
             }
-            case TUNEINFO: {
-                RadioBand band;
-                int bandValue = msgBuf.getInt();     // Get band bytes
-                if (bandValue == 0) {
-                    band = RadioBand.AM;
-                } else if (bandValue == 1) {
-                    band = RadioBand.FM;
-                } else {
-                    Log.wtf(TAG, "Invalid bytes received for band");
-                    return;
-                }
-                int freqency = msgBuf.getInt();    // Get frequency bytes
-                TuneInfo info = new TuneInfo(band, freqency, 0);
-
-                // Dispatch callback with command and data
-                msg.obj = info;
-                this.mCallbackHandler.sendMessage(msg);
+            case TUNE: {
+                TuneInfo info = this.parseTuneInfo(msgBuf);
+                this.mRadioValues.setTune(info);
+                this.mEventHandler.handleTuneEvent(info);
+                this.mDataHandlerEvents.onTuneReceived();
                 break;
             }
-            case HDSONGINFO: {
-                int subch = msgBuf.getInt();
-                int infoLength = msgBuf.getInt();
-
-                if (infoLength != msgBuf.remaining()) {
-                    Log.w(TAG, "String Length received does not match remaining bytes in buffer");
-                    infoLength = msgBuf.remaining();
+            case SEEK: {
+                TuneInfo info = this.parseTuneInfo(msgBuf);
+                this.mEventHandler.handleSeekEvent(info);
+                break;
+            }
+            case HD_ACTIVE: {
+                Boolean hdactive = this.parseBoolean(msgBuf);
+                if (hdactive != null) {
+                    this.mRadioValues.mHdActive.set(hdactive);
+                    this.mEventHandler.handleHdActiveEvent(hdactive);
                 }
-
-                String songInfo;
-                byte[] stringBytes;
-                if (infoLength == 0) {
-                    songInfo = "";
-                } else {
-                    stringBytes = new byte[infoLength];
-                    msgBuf.get(stringBytes);
-                    songInfo = new String(stringBytes);
+                break;
+            }
+            case HD_STREAM_LOCK: {
+                Boolean hdStreamLock = this.parseBoolean(msgBuf);
+                if (hdStreamLock != null) {
+                    this.mRadioValues.mHdStreamLock.set(hdStreamLock);
+                    this.mEventHandler.handleHdStreamLockEvent(hdStreamLock);
                 }
-
-                HDSongInfo hdSongInfo = new HDSongInfo(songInfo, subch);
-                // Dispatch callback with command and data
-                msg.obj = hdSongInfo;
-                this.mCallbackHandler.sendMessage(msg);
+                break;
+            }
+            case HD_SIGNAL_STRENGTH: {
+                int hdSignal = this.parseInteger(msgBuf);
+                this.mRadioValues.mHdSignalStrength.set(hdSignal);
+                this.mEventHandler.handleHdSignalStrengthEvent(hdSignal);
+                break;
+            }
+            case HD_SUBCHANNEL: {
+                int subchannel = this.parseInteger(msgBuf);
+                this.mRadioValues.setHdSubchannel(subchannel);
+                this.mEventHandler.handleHdSubchannelEvent(subchannel);
+                break;
+            }
+            case HD_SUBCHANNEL_COUNT: {
+                int count = this.parseInteger(msgBuf);
+                this.mRadioValues.mHdSubchannelCount.set(count);
+                this.mEventHandler.handleHdSubchannelCountEvent(count);
+                break;
+            }
+            case HD_ENABLE_HD_TUNER: {
+                /* TODO: I'm not sure what this does, and it doesn't return a boolean value
+                    despite what the HDPCR app shows.  Need to debug the radio to find out. For
+                    the time being  I wont  implement
+                 */
+                int buf = this.parseInteger(msgBuf);
+                break;
+            }
+            case HD_TITLE: {
+                HDSongInfo title = this.parseHdSongInfo(msgBuf);
+                this.mRadioValues.setHdTitle(title);
+                this.mEventHandler.handleHdTitleEvent(title);
+                break;
+            }
+            case HD_ARTIST: {
+                HDSongInfo artist = this.parseHdSongInfo(msgBuf);
+                this.mRadioValues.setHdArtist(artist);
+                this.mEventHandler.handleHdArtistEvent(artist);
+                break;
+            }
+            case HD_CALLSIGN: {
+                String callsign = this.parseString(msgBuf);
+                this.mRadioValues.mHdCallsign.set(callsign);
+                this.mEventHandler.handleHdCallsignEvent(callsign);
+                break;
+            }
+            case HD_STATION_NAME: {
+                String stationName = this.parseString(msgBuf);
+                this.mRadioValues.mHdStationName.set(stationName);
+                this.mEventHandler.handleHdStationNameEvent(stationName);
+                break;
+            }
+            case HD_UNIQUE_ID: {
+                String uniqueId = this.parseString(msgBuf);
+                this.mRadioValues.mUniqueId.set(uniqueId);
+                break;
+            }
+            case HD_API_VERSION: {
+                String apiVersion = this.parseString(msgBuf);
+                this.mRadioValues.mApiVersion.set(apiVersion);
+                break;
+            }
+            case HD_HW_VERSION: {
+                String hwVersion = this.parseString(msgBuf);
+                this.mRadioValues.mHwVersion.set(hwVersion);
+                break;
+            }
+            case RDS_ENABLED: {
+                Boolean rdsEnable = this.parseBoolean(msgBuf);
+                if (rdsEnable != null) {
+                    this.mRadioValues.mRdsEnabled.set(rdsEnable);
+                    this.mEventHandler.handleRdsEnabledEvent(rdsEnable);
+                }
+                break;
+            }
+            case RDS_GENRE: {
+                String rdsGenre = this.parseString(msgBuf);
+                this.mRadioValues.mRdsGenre.set(rdsGenre);
+                this.mEventHandler.handleRdsGenreEvent(rdsGenre);
+                break;
+            }
+            case RDS_PROGRAM_SERVICE: {
+                String rdsProgramService = this.parseString(msgBuf);
+                this.mRadioValues.mRdsProgramService.set(rdsProgramService);
+                this.mEventHandler.handleRdsProgramServiceEvent(rdsProgramService);
+                break;
+            }
+            case RDS_RADIO_TEXT: {
+                String rdsRadioText = this.parseString(msgBuf);
+                this.mRadioValues.mRdsRadioText.set(rdsRadioText);
+                this.mEventHandler.handleRdsRadioTextEvent(rdsRadioText);
+                break;
+            }
+            case VOLUME: {
+                int volume = this.parseInteger(msgBuf);
+                this.mRadioValues.mVolume.set(volume);
+                this.mEventHandler.handleVolumeEvent(volume);
+                break;
+            }
+            case BASS: {
+                int bass = this.parseInteger(msgBuf);
+                this.mRadioValues.mBass.set(bass);
+                this.mEventHandler.handleBassEvent(bass);
+                break;
+            }
+            case TREBLE: {
+                int treble = this.parseInteger(msgBuf);
+                this.mRadioValues.mTreble.set(treble);
+                this.mEventHandler.handleTrebleEvent(treble);
+                break;
+            }
+            case COMPRESSION: {
+                int compression = this.parseInteger(msgBuf);
+                this.mRadioValues.mCompression.set(compression);
+                this.mEventHandler.handleCompressionEvent(compression);
                 break;
             }
             default:
-                Log.wtf(TAG, "Unknown type");
+                Log.i(TAG, "Invalid Command");
+        }
+
+        if (msgBuf.remaining() > 0) {
+            Log.w(TAG, "Remaining bytes in Data packet after parsing");
         }
 
     }
+
+    private int parseInteger(ByteBuffer msgBuffer) {
+        int value = msgBuffer.getInt();
+
+        if (DEBUG)
+            Log.d(TAG, "Value: " + value);
+        return value;
+    }
+
+    private Boolean parseBoolean(ByteBuffer msgBuffer) {
+        // Boolean's are received as 4 bytes, 0 is false 1 is true.
+        int boolValue = msgBuffer.getInt();
+        boolean status;
+        if (boolValue == 1) {
+            status = true;
+        } else if (boolValue == 0) {
+            status = false;
+        } else {
+            Log.i(TAG, "Invalid boolean value: " + boolValue);
+            return null;
+        }
+
+        if (DEBUG)
+            Log.d(TAG, "Value: " + status);
+
+        return status;
+    }
+
+    private String parseString(ByteBuffer msgBuffer) {
+        // Get length of the string
+        int strLength = msgBuffer.getInt();
+
+        if (strLength != msgBuffer.remaining()) {
+            Log.i(TAG, "String Length received does not match remaining bytes in buffer");
+            strLength = msgBuffer.remaining();
+        }
+
+        String strMsg;
+        byte[] stringBytes;
+        if (strLength == 0) {
+            strMsg = "";
+        } else {
+            stringBytes = new byte[strLength];
+            msgBuffer.get(stringBytes);
+            strMsg = new String(stringBytes);
+        }
+
+        if (DEBUG)
+            Log.d(TAG, "Length: " + strLength + "\nConverted String: \n" + strMsg);
+
+        return strMsg;
+    }
+
+    private TuneInfo parseTuneInfo(ByteBuffer msgBuffer) {
+        RadioBand band;
+        int bandValue = msgBuffer.getInt();     // Get band bytes
+        if (bandValue == 0) {
+            band = RadioBand.AM;
+        } else if (bandValue == 1) {
+            band = RadioBand.FM;
+        } else {
+            Log.wtf(TAG, "Invalid value recieved for band: " + bandValue);
+            return null;
+        }
+
+        int freqency = msgBuffer.getInt();    // Get frequency bytes
+
+        if (DEBUG)
+            Log.d(TAG, "Value: " + freqency + " " + band.toString());
+
+        return new TuneInfo(band, freqency, 0);
+    }
+
+    private HDSongInfo parseHdSongInfo(ByteBuffer msgBuffer) {
+        int subch = msgBuffer.getInt();
+        int infoLength = msgBuffer.getInt();
+
+        if (infoLength != msgBuffer.remaining()) {
+            Log.w(TAG, "String Length received does not match remaining bytes in buffer");
+            infoLength = msgBuffer.remaining();
+        }
+
+        String songInfo;
+        byte[] stringBytes;
+        if (infoLength == 0) {
+            songInfo = "";
+        } else {
+            stringBytes = new byte[infoLength];
+            msgBuffer.get(stringBytes);
+            songInfo = new String(stringBytes);
+        }
+
+        if (DEBUG)
+            Log.d(TAG, "Subchannel: " + subch + " String: " + songInfo);
+
+        return new HDSongInfo(songInfo, subch);
+    }
+
 }
+
+

@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">HDRadio</string>
+    <string name="pref_file_key">com.arksine.hdradiolib.PREFERENCES</string>
 </resources>
