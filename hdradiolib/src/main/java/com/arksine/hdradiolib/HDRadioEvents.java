@@ -8,6 +8,11 @@ import com.arksine.hdradiolib.enums.RadioError;
 
 public interface HDRadioEvents {
 
+    // TODO: I don't have an event for software power off because it isn't consistent.  When powering
+    // on it gives the correct item, however when powering off it doesn't deliver a message until AFTER
+    // it powers on again.
+    //  I could attempt to power off without lowering DTR to see if I get a reply.
+
     /**
      * Callback executed after the HDRadio.open function is complete.
      *
@@ -19,26 +24,26 @@ public interface HDRadioEvents {
     void onDeviceError(RadioError error);
     void onRadioPowerOn();
     void onRadioPowerOff();
-    void onRadioMute(boolean muteStatus);
-    void onRadioSignalStrength(int signalStrength);
-    void onRadioTune(TuneInfo tuneInfo);
-    void onRadioSeek(TuneInfo seekInfo);
-    void onRadioHdActive(boolean hdActive);
-    void onRadioHdStreamLock(boolean hdStreamLock);
-    void onRadioHdSignalStrength(int hdSignalStrength);
-    void onRadioHdSubchannel(int subchannel);
-    void onRadioHdSubchannelCount(int subchannelCount);
-    // void onRadioHdEnableTunerEnabled(boolean status);  // TODO: this isn't a boolean, need to reverse radio to see what it really is
-    void onRadioHdTitle(HDSongInfo hdTitle);
-    void onRadioHdArtist(HDSongInfo hdArtist);
-    void onRadioHdCallsign(String hdCallsign);
-    void onRadioHdStationName(String hdStationName);
-    void onRadioRdsEnabled(boolean rdsEnabled);
-    void onRadioRdsGenre(String rdsGenre);
-    void onRadioRdsProgramService(String rdsProgramService);
-    void onRadioRdsRadioText(String rdsRadioText);
-    void onRadioVolume(int volume);
-    void onRadioBass(int bass);
-    void onRadioTreble(int treble);
-    void onRadioCompression(int compression);  // TODO: not sure this is an integer value
+    void onRadioMute(final boolean muteStatus);
+    void onRadioSignalStrength(final int signalStrength);
+    void onRadioTune(final TuneInfo tuneInfo);
+    void onRadioSeek(final TuneInfo seekInfo);
+    void onRadioHdActive(final boolean hdActive);
+    void onRadioHdStreamLock(final boolean hdStreamLock);
+    void onRadioHdSignalStrength(final int hdSignalStrength);
+    void onRadioHdSubchannel(final int subchannel);
+    void onRadioHdSubchannelCount(final int subchannelCount);
+    // void onRadioHdEnableTunerEnabled(final boolean status);  // TODO: this isn't a boolean, need to reverse radio to see what it really is
+    void onRadioHdTitle(final HDSongInfo hdTitle);
+    void onRadioHdArtist(final HDSongInfo hdArtist);
+    void onRadioHdCallsign(final String hdCallsign);
+    void onRadioHdStationName(final String hdStationName);
+    void onRadioRdsEnabled(final boolean rdsEnabled);
+    void onRadioRdsGenre(final String rdsGenre);
+    void onRadioRdsProgramService(final String rdsProgramService);
+    void onRadioRdsRadioText(final String rdsRadioText);
+    void onRadioVolume(final int volume);
+    void onRadioBass(final int bass);
+    void onRadioTreble(final int treble);
+    void onRadioCompression(final int compression);  // TODO: not sure this is an integer value
 }

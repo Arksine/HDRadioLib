@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.provider.MediaStore;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.DisplayMetrics;
@@ -47,18 +48,14 @@ public class RadioActivity extends AppCompatActivity {
     // Executor Service to manage threads
     private ExecutorService EXECUTOR = Executors.newCachedThreadPool(new BackgroundThreadFactory());
 
-    // Local tracking vars.
+    // Local tracking vars.  These can be obtained by getters in the RadioController, but its
+    // faster/easier to keep a copy of frequently accessed variables in the activity.
     private AtomicBoolean mIsConnected = new AtomicBoolean(false);
     private AtomicBoolean mIsPoweredOn = new AtomicBoolean(false);
     private AtomicBoolean mHdActive = new AtomicBoolean(false);
-    private AtomicBoolean mRdsActive = new AtomicBoolean(false);
-    private AtomicBoolean mIsRequestingSignal = new AtomicBoolean(false);
     private AtomicBoolean mIsExiting = new AtomicBoolean(false);
-
-    private int mCurrentFrequency = 879;
-    private RadioBand mCurrentBand = RadioBand.FM;
-
-    private HDRadioValues mRadioValues;
+    private volatile int mCurrentFrequency = 879;
+    private volatile RadioBand mCurrentBand = RadioBand.FM;
 
     // Content Views
     private TextSwapAnimator mTextSwapAnimator;
@@ -77,48 +74,41 @@ public class RadioActivity extends AppCompatActivity {
         setContentView(R.layout.activity_radio);
 
         buildRadioInstance();
-        mRadioValues = new HDRadioValues(this);
-        mUiHandler = new Handler(Looper.getMainLooper(), mUiHandlerCallback);
+        mUiHandler = new Handler(Looper.getMainLooper());
         mRadioActivityPrefs = this.getSharedPreferences("radio_activity_preferences",
                 Context.MODE_PRIVATE);
 
         initViews();
         mTextSwapAnimator = new TextSwapAnimator(mRadioInfoText);
-        mClearViewsRunnable.run();  // TODO: should I do this after setupScrollView in onResume?
+        mClearViewsRunnable.run();
 
-        mHdRadio.open();
+
     }
 
     @Override
     protected void onResume() {
         super.onResume();
 
+        mHdRadio.open();
         // Call this to adjust the scrollview size if the window changes
         setupScrollView();
         mTextSwapAnimator.startAnimation();
+
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         mTextSwapAnimator.stopAnimation();
-    }
-
-    @Override
-    protected void onStop() {
-        super.onStop();
         exit();
     }
 
     private void exit() {
         mIsExiting.set(true);
-        mRadioValues.savePersistentPrefs(this);
-        mIsRequestingSignal.set(false);
-        if (mIsConnected.get()) {
+        if (mHdRadio != null && mHdRadio.isOpen()) {
             mHdRadio.close();
         }
     }
-
 
     /**
      * Setup HdRadio instance with the appropriate Callbacks
@@ -145,6 +135,14 @@ public class RadioActivity extends AppCompatActivity {
 
                     // enable the power button
                     togglePowerButton(true);
+
+                    // set seekall button
+                    RadioActivity.this.mUiHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            mSeekAllButton.setChecked(mController.getSeekAll());
+                        }
+                    });
                 }
 
             }
@@ -196,7 +194,6 @@ public class RadioActivity extends AppCompatActivity {
 
                 // enable the power button
                 togglePowerButton(true);
-                runOnUiThread(mInitializeRadio);
             }
 
             @Override
@@ -209,17 +206,253 @@ public class RadioActivity extends AppCompatActivity {
             }
 
             @Override
-            public void onRadioDataReceived(RadioCommand key, Object value) {
-                mRadioValues.setHdValue(key, value);
+            public void onRadioMute(final boolean muteStatus) {
+                RadioActivity.this.mUiHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        mMuteButton.setChecked(muteStatus);
+                    }
+                });
 
-                // Obtain a message setting the what member as the command's ordinal, and
-                // the obj member to the value received
-                Message msg = mUiHandler.obtainMessage(key.ordinal(), value);
-                mUiHandler.sendMessage(msg);
+            }
+
+            @Override
+            public void onRadioSignalStrength(final int signalStrength) {
+                // Update Signal strength meter
+            }
+
+            @Override
+            public void onRadioTune(final TuneInfo tuneInfo) {
+                mCurrentFrequency = tuneInfo.getFrequency();
+                mCurrentBand = tuneInfo.getBand();
+                mHdActive.set(false);
+
+                // Format the string depending on FM or AM
+                final String tuneStr = (mCurrentBand == RadioBand.FM) ?
+                        String.format(Locale.US, "%1$.1f FM", (float) mCurrentFrequency / 10) :
+                        String.format(Locale.US, "%1$d AM", mCurrentFrequency);
+                final boolean bandStatus = (mCurrentBand == RadioBand.FM);
+
+                RadioActivity.this.mUiHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        mBandButton.setChecked(bandStatus);
+                        mTextSwapAnimator.setTextItem(RadioCommand.TUNE, tuneStr);
+                        mTextSwapAnimator.resetAnimator();
+                        mRadioStatusText.setText("");
+                        mRadioFreqText.setText(tuneStr);
+                    }
+                });
+
+            }
+
+            @Override
+            public void onRadioSeek(final TuneInfo seekInfo) {
+
+                // Format the string depending on FM or AM
+                final String seekStr = (seekInfo.getBand() == RadioBand.FM) ?
+                        String.format(Locale.US, "%1$.1f FM", seekInfo.getFrequency() / 10f) :
+                        String.format(Locale.US, "%1$d AM", seekInfo.getFrequency());
+                RadioActivity.this.mUiHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        mRadioFreqText.setText(seekStr);
+                    }
+                });
+            }
+
+            @Override
+            public void onRadioHdActive(final boolean hdActive) {
+                // TODO: Show HD Icon if true, hide if false, the textview below is temporary
+                mHdActive.set(hdActive);
+
+                RadioActivity.this.mUiHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (hdActive) {
+                            mRadioStatusText.setText("HD");
+                        } else {
+                            mRadioStatusText.setText("");
+                        }
+                    }
+                });
+
+            }
+
+            @Override
+            public void onRadioHdStreamLock(final boolean hdStreamLock) {
+                // Probably don't need to do anything here
+            }
+
+            @Override
+            public void onRadioHdSignalStrength(final int hdSignalStrength) {
+                // Update signal bar
+            }
+
+            @Override
+            public void onRadioHdSubchannel(final int subchannel) {
+                if (mHdActive.get() && subchannel > 0) {
+                    // HD is active and the subchannel is valid
+
+                    // Format the HD string
+                    final String hdStr = (mCurrentBand == RadioBand.FM) ?
+                            String.format(Locale.US, "%1$.1f FM HD%2$d",
+                                    (float)mCurrentFrequency/10, subchannel) :
+                            String.format(Locale.US, "%1$d AM HD%2$d",
+                                    mCurrentFrequency, subchannel);
+
+                    RadioActivity.this.mUiHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            mRadioFreqText.setText(hdStr);
+                            mTextSwapAnimator.setTextItem(RadioCommand.TUNE, hdStr);
+
+                            // Update info text with artist and title from current subchannel
+                            mTextSwapAnimator.setTextItem(RadioCommand.HD_TITLE,
+                                    mController.getHdTitle());
+                            mTextSwapAnimator.setTextItem(RadioCommand.HD_ARTIST,
+                                    mController.getHdArtist());
+                        }
+                    });
+
+
+                } else {
+                    // HD is not active, or the subchannel is not valid
+
+                    // Format standard string
+                    final String stdStr = (mCurrentBand == RadioBand.FM) ?
+                            String.format(Locale.US, "%1$.1f FM", (float) mCurrentFrequency / 10) :
+                            String.format(Locale.US, "%1$d AM", mCurrentFrequency);
+
+                    RadioActivity.this.mUiHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            mRadioFreqText.setText(stdStr);
+                            mTextSwapAnimator.setTextItem(RadioCommand.TUNE, stdStr);
+                        }
+                    });
+                }
+            }
+
+            @Override
+            public void onRadioHdSubchannelCount(final int subchannelCount) {
+                // Dont need to do anything here
+            }
+
+            @Override
+            public void onRadioHdTitle(final HDSongInfo hdTitle) {
+                //  request current subchannel if we don't have a subchannel set
+                if (mController.getHdSubchannel() < 1) {
+                    mController.requestUpdate(RadioCommand.HD_SUBCHANNEL);
+                }
+
+                RadioActivity.this.mUiHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        mTextSwapAnimator.setTextItem(RadioCommand.HD_TITLE, hdTitle.getInfo());
+                    }
+                });
+
+            }
+
+            @Override
+            public void onRadioHdArtist(final HDSongInfo hdArtist) {
+                //  request current subchannel if we don't have a subchannel set
+                if (mController.getHdSubchannel() < 1) {
+                    mController.requestUpdate(RadioCommand.HD_SUBCHANNEL);
+                }
+
+                RadioActivity.this.mUiHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        mTextSwapAnimator.setTextItem(RadioCommand.HD_ARTIST, hdArtist.getInfo());
+                    }
+                });
+            }
+
+            @Override
+            public void onRadioHdCallsign(final String hdCallsign) {
+                RadioActivity.this.mUiHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        mTextSwapAnimator.setTextItem(RadioCommand.HD_CALLSIGN, hdCallsign);
+                    }
+                });
+
+            }
+
+            @Override
+            public void onRadioHdStationName(final String hdStationName) {
+                // TODO: this is a String, I should probably do something with this
+            }
+
+            @Override
+            public void onRadioRdsEnabled(final boolean rdsEnabled) {
+                RadioActivity.this.mUiHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (rdsEnabled) {
+                            mRadioStatusText.setText("RDS");
+                        } else {
+                            mRadioStatusText.setText("");
+                        }
+                    }
+                });
+
+            }
+
+            @Override
+            public void onRadioRdsGenre(final String rdsGenre) {
+                RadioActivity.this.mUiHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        mTextSwapAnimator.setTextItem(RadioCommand.RDS_GENRE, rdsGenre);
+                    }
+                });
+            }
+
+            @Override
+            public void onRadioRdsProgramService(final String rdsProgramService) {
+                // TODO: should probably stream this
+            }
+
+            @Override
+            public void onRadioRdsRadioText(final String rdsRadioText) {
+                RadioActivity.this.mUiHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        mTextSwapAnimator.setTextItem(RadioCommand.RDS_RADIO_TEXT, rdsRadioText);
+                    }
+                });
+            }
+
+            @Override
+            public void onRadioVolume(final int volume) {
+                RadioActivity.this.mUiHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        mVolumeSeekbar.setProgress(volume);
+                    }
+                });
+            }
+
+            @Override
+            public void onRadioBass(final int bass) {
+                // update volume seekbar
+            }
+
+            @Override
+            public void onRadioTreble(final int treble) {
+                // update treble seekbar
+            }
+
+            @Override
+            public void onRadioCompression(final int compression) {
+                // update compression
             }
         };
 
-        mHdRadio = new HDRadio(this, callbacks);
+        mHdRadio = new HDRadio(this, callbacks, HDRadio.DriverType.USB_SERIAL_TEST_DRIVER);
     }
 
     private void initViews() {
@@ -303,10 +536,8 @@ public class RadioActivity extends AppCompatActivity {
                         final int subChannel = mRadioActivityPrefs.getInt("pref_key_stored_fm_subch", 0);
 
                         // Persist current AM channel
-                        int prevFreq = ((TuneInfo)mRadioValues
-                                .getHdValue(RadioCommand.TUNE)).getFrequency();
-                        int prevSubCh = mHdActive.get() ? (int)mRadioValues
-                                .getHdValue(RadioCommand.HD_SUBCHANNEL) : 0;
+                        int prevFreq = mController.getTune().getFrequency();
+                        int prevSubCh = mHdActive.get() ? mController.getHdSubchannel() : 0;
                         mRadioActivityPrefs.edit().putInt("pref_key_stored_am_freq", prevFreq)
                                 .putInt("pref_key_stored_am_subch", prevSubCh)
                                 .apply();
@@ -322,10 +553,8 @@ public class RadioActivity extends AppCompatActivity {
                         final int subChannel = mRadioActivityPrefs.getInt("pref_key_stored_am_subch", 0);
 
                         // Persist current FM channel
-                        int prevFreq = ((TuneInfo)mRadioValues
-                                .getHdValue(RadioCommand.TUNE)).getFrequency();
-                        int prevSubCh = mHdActive.get() ? (int)mRadioValues
-                                .getHdValue(RadioCommand.HD_SUBCHANNEL) : 0;
+                        int prevFreq = mController.getTune().getFrequency();
+                        int prevSubCh = mHdActive.get() ? mController.getHdSubchannel() : 0;
 
                         mRadioActivityPrefs.edit().putInt("pref_key_stored_fm_freq", prevFreq)
                                 .putInt("pref_key_stored_fm_subch", prevSubCh)
@@ -348,8 +577,8 @@ public class RadioActivity extends AppCompatActivity {
                     EXECUTOR.execute(new Runnable() {
                         @Override
                         public void run() {
-                            int curSc = (int)mRadioValues.getHdValue(RadioCommand.HD_SUBCHANNEL);
-                            int count = (int)mRadioValues.getHdValue(RadioCommand.HD_SUBCHANNEL);
+                            int curSc = mController.getHdSubchannel();
+                            int count = mController.getHdSubchannelCount();
 
                             if (!mHdActive.get() || curSc >= count) {
                                 // If not currently tuned to an HD Channel, or the channel is
@@ -373,7 +602,7 @@ public class RadioActivity extends AppCompatActivity {
                         @Override
                         public void run() {
 
-                            int curSc = (int)mRadioValues.getHdValue(RadioCommand.HD_SUBCHANNEL);
+                            int curSc = mController.getHdSubchannel();
                             if (curSc < 2) {
                                 // tune down to the next channel, as we either arent on an HD channel
                                 // or are on channel 1
@@ -451,179 +680,9 @@ public class RadioActivity extends AppCompatActivity {
         }
     }
 
-    /**
-     * UI Handler Callback
-     *
-     * TODO: In the future I'll probably create individual callbacks for each individual command, so
-     * there will be no use a handler callback with a huge switch statement.
-     */
-    private Handler.Callback mUiHandlerCallback = new Handler.Callback() {
-        @Override
-        public boolean handleMessage(Message msg) {
-            RadioCommand cmd = RadioCommand.getCommandFromOrdinal(msg.what);
-            if (cmd == null) {
-                Log.i(TAG, "Invalid command");
-                return false;
-            }
-            Object value = msg.obj;
-
-            switch (cmd) {
-                case POWER:
-                    // this variable isn't consistent. It is properly received when the radio is
-                    // powered on, but no reply is received when the radio is powered off, even when
-                    // its powered off by software
-
-                    // TODO: I could attempt to power off without lowering DTR
-                    break;
-                case MUTE:
-                    mMuteButton.setChecked((boolean)value);
-                    break;
-                case VOLUME:
-                    mVolumeSeekbar.setProgress((int)value);
-                    break;
-                case BASS:
-                    // Placeholder
-                    break;
-                case TREBLE:
-                    // Placeholder
-                    break;
-                case HD_SUBCHANNEL: {
-                    String newFreq;
-                    if (mHdActive.get() && (int)value > 0) {
-                        // HD is active and the subchannel is valid
-
-                        if (mCurrentBand == RadioBand.FM) {
-                            // Formats the string: Frequency Band HDx
-                            newFreq = String.format(Locale.US, "%1$.1f FM HD%2$d",
-                                    (float)mCurrentFrequency/10, (int)value);
-                        } else if (mCurrentBand == RadioBand.AM) {
-                            newFreq = String.format(Locale.US, "%1$d AM HD%2$d",
-                                    mCurrentFrequency, (int)value);
-                        } else {
-                            // Unknown Band
-                            break;
-                        }
-
-                        mRadioFreqText.setText(newFreq);
-                        mTextSwapAnimator.setTextItem(RadioCommand.TUNE, newFreq);
-
-                        // Update info text with artist and title from current subchannel
-                        mTextSwapAnimator.setTextItem(RadioCommand.HD_TITLE,
-                                (String)mRadioValues.getHdValue(RadioCommand.HD_TITLE));
-                        mTextSwapAnimator.setTextItem(RadioCommand.HD_ARTIST,
-                                (String)mRadioValues.getHdValue(RadioCommand.HD_ARTIST));
-
-                    } else {
-                        // HD is not active, or the subchannel is not valid
-                        if (mCurrentBand == RadioBand.FM) {
-                            newFreq = String.format(Locale.US, "%1$.1f FM",
-                                    (float) mCurrentFrequency / 10);
-                        } else if (mCurrentBand == RadioBand.AM){
-                            newFreq = String.format(Locale.US, "%1$d AM", mCurrentFrequency);
-                        } else {
-                            // unknown band
-                            break;
-                        }
-                        mRadioFreqText.setText(newFreq);
-                        mTextSwapAnimator.setTextItem(RadioCommand.TUNE, newFreq);
-
-                    }
-                    break;
-                }
-                case TUNE: {
-                    String newFreq;
-                    TuneInfo info = (TuneInfo) value;
-                    mCurrentFrequency = info.getFrequency();
-                    mCurrentBand = info.getBand();
-                    if (mCurrentBand == RadioBand.FM) {
-
-                        newFreq = String.format(Locale.US, "%1$.1f FM",
-                                (float) mCurrentFrequency / 10);
-                        mBandButton.setChecked(true);
-                    } else {
-
-                        newFreq = String.format(Locale.US, "%1$d AM", mCurrentFrequency);
-                        mBandButton.setChecked(false);
-                    }
-
-                    mTextSwapAnimator.setTextItem(RadioCommand.TUNE, newFreq);
-                    mTextSwapAnimator.resetAnimator();
-                    mRdsActive.set(false);
-                    mHdActive.set(false);
-
-                    mRadioStatusText.setText("");
-                    mRadioFreqText.setText(newFreq);
-                    break;
-                }
-                case SEEK: {
-                    String tmpFreq;
-                    TuneInfo seekInfo = (TuneInfo) value;
-                    if (seekInfo.getBand() == RadioBand.FM) {
-                        tmpFreq = String.format(Locale.US, "%1$.1f FM",
-                                seekInfo.getFrequency() / 10f);
-                    } else {
-                        tmpFreq = String.format(Locale.US, "%1$d AM", seekInfo.getFrequency());
-                    }
-                    mRadioFreqText.setText(tmpFreq);
-                }
-                    break;
-                case HD_ACTIVE: {
-                    // TODO: Show HD Icon if true, hide if false, the textview below is temporary
-                    mHdActive.set((boolean)value);
-                    if (mHdActive.get()) {
-                        mRadioStatusText.setText("HD");
-                    } else {
-                        mRadioStatusText.setText("");
-                    }
-                    break;
-                }
-                case HD_STREAM_LOCK:
-                    // TODO: I should do something with this
-                    break;
-                case HD_TITLE:
-                case HD_ARTIST: {
-                    //  request current subchannel if we don't have a subchannel set
-                    if ((int) mRadioValues.getHdValue(RadioCommand.HD_SUBCHANNEL) < 1) {
-                        mController.requestUpdate(RadioCommand.HD_SUBCHANNEL);
-                    }
-
-                    HDSongInfo songInfo = (HDSongInfo)value;
-                    mTextSwapAnimator.setTextItem(cmd, songInfo.getInfo());
-                    break;
-                }
-                case HD_CALLSIGN:
-                case RDS_RADIO_TEXT:
-                case RDS_GENRE:
-                    mTextSwapAnimator.setTextItem(cmd, (String)value);
-                    break;
-                case RDS_PROGRAM_SERVICE:
-                    // TODO: should do something with this
-                    break;
-                case RDS_ENABLED:
-                    //TODO: show rds icon if true, hide if false
-                    mRdsActive.set((boolean)value);
-                    if (mRdsActive.get()) {
-                        mRadioStatusText.setText("RDS");
-                    } else {
-                        mRadioStatusText.setText("");
-                    }
-                    break;
-                case SIGNAL_STRENGTH:
-
-                    break;
-                case HD_SIGNAL_STRENGTH:
-
-                    break;
-                default:
-            }
-
-            return true;
-        }
-    };
-
     // Allows the power button to be toggled outside of the UI thread
     private void togglePowerButton(final boolean status) {
-        runOnUiThread(new Runnable() {
+        this.mUiHandler.post(new Runnable() {
             @Override
             public void run() {
                 mPowerButton.setEnabled(status);
@@ -632,35 +691,7 @@ public class RadioActivity extends AppCompatActivity {
         });
     }
 
-
-
     // Runnables
-
-    /**
-     * Sets initial radio vars.  Should only be called after the radio has been
-     * powered on.
-     *
-     * TODO: this functionality should move to the libarary along with RadioValues
-     */
-    private Runnable mInitializeRadio = new Runnable() {
-        @Override
-        public void run() {
-            if (mIsPoweredOn.get() && mController != null) {
-                boolean sa = mRadioValues.getSeekAll();
-                mController.setSeekAll(sa);
-                mSeekAllButton.setChecked(sa);
-
-                mController.setVolume(mVolumeSeekbar.getProgress());
-
-                TuneInfo info = (TuneInfo) mRadioValues.getHdValue(RadioCommand.TUNE);
-                mController.tune(info);
-
-                if (!mIsRequestingSignal.get()) {
-                    EXECUTOR.execute(mRequestSignalRunnable);
-                }
-            }
-        }
-    };
 
     /**
      * Resets views to default
@@ -673,42 +704,10 @@ public class RadioActivity extends AppCompatActivity {
             mTextSwapAnimator.resetAnimator();
             mRadioStatusText.setText("");
             mRadioFreqText.setText("");
-            mRdsActive.set(false);
             mHdActive.set(false);
-            mIsRequestingSignal.set(false);
         }
     };
 
-    // TODO: The library should request signal after a tune. That way I can syncrhonize access.
-    // Launch the runnable after a tune,  stop the runnable prior to executing a tune or seek request
 
-    /**
-     * Loops in another thread, requesting signal status every 10 seconds
-     */
-    private Runnable mRequestSignalRunnable = new Runnable() {
-        @Override
-        public void run() {
-            if (mIsRequestingSignal.get()){
-                // Don't execute new runnable if already requesting signal
-                return;
-            }
-
-            mIsRequestingSignal.set(true);
-            while (mController != null && mIsPoweredOn.get() && mIsRequestingSignal.get()) {
-                if (mHdActive.get()) {
-                    mController.requestUpdate(RadioCommand.HD_SIGNAL_STRENGTH);
-                } else {
-                    mController.requestUpdate(RadioCommand.SIGNAL_STRENGTH);
-                }
-
-                try {
-                    Thread.sleep(10000);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-            mIsRequestingSignal.set(false);
-        }
-    };
 
 }

@@ -24,12 +24,8 @@ public abstract class RadioDriver {
     protected DriverEvents mDriverEvents;
 
     public RadioDriver() {
-        this(null, null);
-    }
-
-    public RadioDriver(RadioDataHandler dataHandler, DriverEvents events) {
-        this.mDataHandler = dataHandler;
-        this.mDriverEvents = events;
+        this.mDataHandler = null;
+        this.mDriverEvents = null;
     }
 
     public void initialize (RadioDataHandler dataHandler, DriverEvents events) {
@@ -47,11 +43,12 @@ public abstract class RadioDriver {
         this.mDataHandler.sendMessage(msg);
     }
 
-    public abstract ArrayList<Object> getDeviceList();
-    public abstract Object getIdentifier();
+
+    public abstract <T> ArrayList<T> getDeviceList(Class<T> listType);
+    public abstract String getIdentifier();
     public abstract boolean isOpen();
     public abstract void open();
-    public abstract void openById(Object identifier);
+    public abstract void openById(String identifier);
     public abstract void close();
     public abstract void raiseRts();
     public abstract void clearRts();

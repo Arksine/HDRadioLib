@@ -24,21 +24,24 @@ import com.arksine.hdradiolib.enums.RadioCommand;
 
 public class TextSwapAnimator {
     private static final String TAG = TextSwapAnimator.class.getSimpleName();
+    private static final boolean DEBUG = true;
 
     private static final int DEFAULT_FADE_DURATION = 2000;  // 2 seconds
     private static final int DEFAULT_DELAY_AFTER_FADE = 0;
     private static final int DEFAULT_DISPLAY_DURATON = 3000;
     private static final int DEFAULT_SCROLL_DURATION = 5000;
     private static final int DEFAULT_MAX_WIDTH_MULTIPLIER = 2;
+    private static final int MAX_CAPACITY = 4;
 
     private Handler mAnimationHandler;
-    private final SparseArray<String> mInfoItems = new SparseArray<>(4);
+    private String[] mInfoItems = new String[MAX_CAPACITY];
+
     private TextView mTextView;
     private String mCurrentString;
     private int mScrollViewWidth;
 
     private int mIndex = 0;
-    private int mCapacity = 1;          // should always have atleast
+    private int mCapacity = 1;
     private int mFadeDuration;
     private int mDelayAfterFade;
     private int mDisplayDuration;
@@ -81,10 +84,10 @@ public class TextSwapAnimator {
     }
 
     private void initializeArray() {
-        mInfoItems.put(0, "87.9 FM");
-        mInfoItems.put(1, "");
-        mInfoItems.put(2, "");
-        mInfoItems.put(3, "");
+        mInfoItems[0] = "87.9 FM";
+        mInfoItems[1] = "";
+        mInfoItems[2] = "";
+        mInfoItems[3] = "";
     }
 
     private void initAnimation() {
@@ -138,19 +141,19 @@ public class TextSwapAnimator {
                 if (mAnimationStarted) {
                     mIndex++;
 
-                    while (mIndex < mCapacity) {
-                        if (!(mInfoItems.get(mIndex).equals(""))) {
+                    while (mIndex < MAX_CAPACITY) {
+                        if (!(mInfoItems[mIndex].equals(""))) {
                             break;
                         }
                         mIndex++;
                     }
 
                     // If we iterate to the end of the list, reset the index to 0 (which is never null)
-                    if (mIndex >= mCapacity) {
+                    if (mIndex >= MAX_CAPACITY) {
                         mIndex = 0;
                     }
 
-                    mCurrentString = mInfoItems.get(mIndex);
+                    mCurrentString = mInfoItems[mIndex];
                     mTextView.setText(mCurrentString);
                     checkViewWidth();
 
@@ -244,18 +247,21 @@ public class TextSwapAnimator {
             case RDS_PROGRAM_SERVICE:
                 idx = 3;
                 // TODO: This is too much text.  We need to remove this and rethink how to display RDS text
-                item = mInfoItems.get(idx) + item;  // we append the item to the current string for program service
+                item = mInfoItems[idx] + item;  // we append the item to the current string for program service
                 break;
             default:
                 Log.i(TAG, "Invalid Command Key");
                 return;
         }
 
-        if (mInfoItems.get(idx, "").equals("") && !item.equals("")) {
+        if (mInfoItems[idx].equals("") && !item.equals("")) {
             mCapacity++;
+            if (DEBUG) {
+                Log.d(TAG, "Current Animator Capacity: " + mCapacity);
+            }
         }
 
-        mInfoItems.put(idx, item);
+        mInfoItems[idx] = item;
 
         if (mCapacity > 1 && !mAnimationStarted) {
             startAnimation();
@@ -293,9 +299,13 @@ public class TextSwapAnimator {
                 return;
         }
 
-        if (!(mInfoItems.get(idx).equals(""))) {
-            mInfoItems.put(idx, "");
+        if (!(mInfoItems[idx].equals(""))) {
+            mInfoItems[idx] = "";
             mCapacity--;
+
+            if (DEBUG) {
+                Log.d(TAG, "Current Animator Capacity: " + mCapacity);
+            }
 
             if (mCapacity <= 1) {
                 stopAnimation();
@@ -306,11 +316,11 @@ public class TextSwapAnimator {
     public void startAnimation() {
         if (mCapacity > 1) {
             mAnimationStarted = true;
-            mCurrentString = mInfoItems.get(mIndex);
+            mCurrentString = mInfoItems[mIndex];
             mTextView.setText(mCurrentString);
             mFadeOutAnimation.start();
         } else {
-            mCurrentString = mInfoItems.get(0);
+            mCurrentString = mInfoItems[0];
             mTextView.setText(mCurrentString);
         }
     }
@@ -329,10 +339,10 @@ public class TextSwapAnimator {
         stopAnimation();
         mIndex = 0;
         mCapacity = 1;
-        mInfoItems.put(1, "");
-        mInfoItems.put(2, "");
-        mInfoItems.put(3, "");
-        mCurrentString = mInfoItems.get(0);
+        mInfoItems[1] = "";
+        mInfoItems[2] = "";
+        mInfoItems[3] = "";
+        mCurrentString = mInfoItems[0];
         mTextView.setText(mCurrentString);
         ViewGroup.LayoutParams params = mTextView.getLayoutParams();
         params.width = mScrollViewWidth;

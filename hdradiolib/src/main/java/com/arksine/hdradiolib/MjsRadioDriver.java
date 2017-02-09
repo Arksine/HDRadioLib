@@ -7,7 +7,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
-import android.os.Message;
 import android.os.Process;
 import android.support.annotation.NonNull;
 import android.util.Log;
@@ -27,7 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 class MjsRadioDriver extends RadioDriver {
     private static final String TAG = MjsRadioDriver.class.getSimpleName();
 
-    private static final Object OPEN_LOCK = new Object();
+    private final Object OPEN_LOCK = new Object();
     private final Object READ_LOCK = new Object();
 
     private static final String ACTION_USB_PERMISSION = "com.arksine.hdradiolib.USB_PERMISSION";
@@ -38,18 +37,13 @@ class MjsRadioDriver extends RadioDriver {
     private ReadThread mReadThread;
     private String mSerialNumber;
 
-    MjsRadioDriver(Context context, RadioDataHandler dataHandler, DriverEvents events) {
-        super(dataHandler, events);
-
+    MjsRadioDriver(Context context) {
         this.mContext = context;
-        this.mReadThread = new ReadThread();
-        this.mReadThread.setPriority(Process.THREAD_PRIORITY_BACKGROUND);
-        this.mReadThread.start();
     }
 
     @Override
-    public Object getIdentifier() {
-        return mSerialNumber;
+    public String getIdentifier() {
+        return this.mSerialNumber;
     }
 
     @Override
@@ -75,8 +69,8 @@ class MjsRadioDriver extends RadioDriver {
      *                     cable's unique serial number
      */
     @Override
-    public void openById(Object identifier) {
-        ConnectionThread thread = new ConnectionThread((String)identifier);
+    public void openById(String identifier) {
+        ConnectionThread thread = new ConnectionThread(identifier);
         thread.start();
     }
 
@@ -167,26 +161,26 @@ class MjsRadioDriver extends RadioDriver {
     /**
      * Searches connected USB Devices for the MJS Gadgets HD Radio Cable
      *
-     * @return The matching UsbDevice instance if found, null if not found
+     * @return true if successful, false if not successful
      */
     @Override
-    public ArrayList<Object> getDeviceList() {
+    public <T> ArrayList<T> getDeviceList(Class<T> listType) {
         UsbManager manager = (UsbManager) mContext.getSystemService(Context.USB_SERVICE);
         HashMap<String, UsbDevice> usbDeviceList = manager.getDeviceList();
-        ArrayList<Object> hdDeviceList = new ArrayList<>(5);
+        ArrayList<T> hdDeviceList = new ArrayList<>(5);
 
         for (UsbDevice uDevice : usbDeviceList.values()) {
             if ((uDevice.getVendorId() == 1027) && (uDevice.getProductId() == 37752)) {
                 Log.v(TAG, "MJS Gadgets HD Radio Cable found");
-                hdDeviceList.add(uDevice);
+                hdDeviceList.add(listType.cast(uDevice));
             }
         }
         if (hdDeviceList.isEmpty()) {
             Log.v(TAG, "MJS Gadgets HD Radio Cable not found");
         }
         return hdDeviceList;
-    }
 
+    }
 
     private class ReadThread extends Thread {
         private static final int MAX_READ_SIZE = 256;
@@ -336,7 +330,7 @@ class MjsRadioDriver extends RadioDriver {
 
                 UsbManager usbManager = (UsbManager) (MjsRadioDriver.this.mContext)
                         .getSystemService(Context.USB_SERVICE);
-                ArrayList<Object> hdDeviceList = MjsRadioDriver.this.getDeviceList();
+                ArrayList<UsbDevice> hdDeviceList = MjsRadioDriver.this.getDeviceList(UsbDevice.class);
                 if (hdDeviceList.isEmpty()) {
                     // Dispatch On Opened Callback
                     MjsRadioDriver.this.mDriverEvents.onOpened(false);
@@ -344,13 +338,13 @@ class MjsRadioDriver extends RadioDriver {
 
                     MjsRadioDriver.this.mFtDevice = null;
                     // Iterate through the list of compatible radio devices, comparing serial numbers if necessary
-                    for (Object hdRadioDev : hdDeviceList) {
-                        if (!usbManager.hasPermission((UsbDevice)hdRadioDev)) {
+                    for (UsbDevice hdRadioDev : hdDeviceList) {
+                        if (!usbManager.hasPermission(hdRadioDev)) {
                             this.mUsbRequestGranted.set(false);
                             // request permission and wait
                             PendingIntent pi = PendingIntent.getBroadcast(MjsRadioDriver.this.mContext,
                                     0, new Intent(ACTION_USB_PERMISSION), 0);
-                            usbManager.requestPermission((UsbDevice)hdRadioDev, pi);
+                            usbManager.requestPermission(hdRadioDev, pi);
 
                             synchronized (this) {
                                 try {
@@ -363,7 +357,7 @@ class MjsRadioDriver extends RadioDriver {
 
                             if (!this.mUsbRequestGranted.get()) {
                                 Log.i(TAG, "Usb Permission not granted to device: " +
-                                        ((UsbDevice)hdRadioDev).getDeviceName());
+                                        (hdRadioDev).getDeviceName());
                                 break;
                             }
                         }
@@ -374,12 +368,12 @@ class MjsRadioDriver extends RadioDriver {
                         // like below
                         //
                         // If its already there it wont' be duplicated.
-                        if (ftdiManager.addUsbDevice((UsbDevice)hdRadioDev) < 1) {
+                        if (ftdiManager.addUsbDevice(hdRadioDev) < 1) {
                             Log.i(TAG, "Device was not added");
                         }
 
                         MjsRadioDriver.this.mFtDevice = ftdiManager.openByUsbDevice(MjsRadioDriver.this.mContext,
-                                (UsbDevice)hdRadioDev);
+                                hdRadioDev);
                         if (MjsRadioDriver.this.mFtDevice != null &&
                                 MjsRadioDriver.this.mFtDevice.isOpen()) {
                             if (mRequestedSerialNumber == null) {
@@ -398,7 +392,7 @@ class MjsRadioDriver extends RadioDriver {
                             }
                         } else {
                             Log.i(TAG, "Unable to open device: " +
-                                    ((UsbDevice)hdRadioDev).getDeviceName());
+                                    hdRadioDev.getDeviceName());
                             MjsRadioDriver.this.mFtDevice = null;
                         }
 
@@ -418,6 +412,11 @@ class MjsRadioDriver extends RadioDriver {
                         MjsRadioDriver.this.mFtDevice.setFlowControl(D2xxManager.FT_FLOW_NONE, (byte) 0x0b, (byte) 0x0d);
                         MjsRadioDriver.this.mFtDevice.clrDtr(); // Don't power on
                         MjsRadioDriver.this.mFtDevice.setRts(); // Raise the RTS to turn on hardware mute
+
+                        // Start read thread
+                        MjsRadioDriver.this.mReadThread = new ReadThread();
+                        MjsRadioDriver.this.mReadThread.setPriority(Process.THREAD_PRIORITY_BACKGROUND);
+                        MjsRadioDriver.this.mReadThread.start();
 
                         // Open success, dispatch callback
                         MjsRadioDriver.this.mDriverEvents.onOpened(true);

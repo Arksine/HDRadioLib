@@ -3,6 +3,7 @@ package com.arksine.hdradiolib;
 import android.support.annotation.NonNull;
 import android.util.Log;
 
+import com.arksine.hdradiolib.enums.RadioBand;
 import com.arksine.hdradiolib.enums.RadioCommand;
 import com.arksine.hdradiolib.enums.RadioConstant;
 import com.arksine.hdradiolib.enums.RadioOperation;
@@ -22,15 +23,10 @@ class RadioPacketBuilder {
     private RadioPacketBuilder() {}
 
     public static byte[] buildRadioPacket(RadioCommand command, RadioOperation op) {
-        return buildRadioPacket(command, op, null, null);
+        return buildRadioPacket(command, op, null);
     }
 
     public static byte[] buildRadioPacket(RadioCommand command, RadioOperation op, Object data) {
-        return buildRadioPacket(command, op, data, null);
-    }
-
-    public static byte[] buildRadioPacket(RadioCommand command, RadioOperation op, Object data,
-                                          Boolean seekAll) {
 
 
         byte[] dataPacket;
@@ -42,7 +38,7 @@ class RadioPacketBuilder {
                 dataPacket = buildRequestPacket(command);
                 break;
             case SET:
-                dataPacket = buildSetPacket(command, data, seekAll);
+                dataPacket = buildSetPacket(command, data);
                 break;
             default:
                 Log.i(TAG, "Invalid operation, must be get or set");
@@ -136,8 +132,7 @@ class RadioPacketBuilder {
         return dataBuf.array();
     }
 
-    private static byte[] buildSetPacket(@NonNull RadioCommand command, Object data,
-                                         Boolean seekAll) {
+    private static byte[] buildSetPacket(@NonNull RadioCommand command, Object data) {
 
         ByteBuffer dataBuf = ByteBuffer.allocate(256);  // 256 is absolute maximum length of packet
         dataBuf.order(ByteOrder.LITTLE_ENDIAN);
@@ -246,25 +241,24 @@ class RadioPacketBuilder {
 
                 break;
             case SEEK:
-                if (!(data instanceof RadioConstant)) {
+                if (!(data instanceof SeekData)) {
                     // Seek must be a constant, up or down
                     Log.i(TAG, "Invalid data received for command: " + command);
                     return null;
-                } else if (seekAll == null) {
-                    Log.i(TAG, "SeekAll not set for seek command, cannot build packet");
-                    return null;
                 }
 
-                RadioConstant seekDir = (RadioConstant)data;
-                if (!(seekDir == RadioConstant.UP || seekDir == RadioConstant.DOWN)) {
+                SeekData seekData = (SeekData)data;
+                RadioConstant seekDir = seekData.getDirection();
+                if (!(seekDir == RadioConstant.UP ||
+                        seekDir == RadioConstant.DOWN)) {
                     Log.i(TAG, "Direction is not valid for tune command");
                     return null;
                 }
-                dataBuf.put(RadioConstant.SEEK_REQUEST.getBytes());
+                dataBuf.put(seekData.getBand().getBytes());  // Band Bytes (The HD Radio app uses SEEK_REQ_ID), the real controller uses band
                 dataBuf.put(RadioConstant.ZERO.getBytes());
                 dataBuf.put(seekDir.getBytes());
 
-                if (seekAll) {
+                if (seekData.isSeekAll()) {
                     // Seek all stations
                     dataBuf.put(RadioConstant.ZERO.getBytes());
                 } else {
@@ -272,7 +266,6 @@ class RadioPacketBuilder {
                     dataBuf.put(RadioConstant.ONE.getBytes());
                 }
 
-                dataBuf.put(RadioConstant.ZERO.getBytes());
                 break;
             default:
                 Log.i(TAG, "Invalid command, cannot set: " + command);

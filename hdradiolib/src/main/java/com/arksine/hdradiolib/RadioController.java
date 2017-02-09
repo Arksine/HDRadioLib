@@ -9,12 +9,10 @@ import com.arksine.hdradiolib.enums.RadioCommand;
 
 public interface RadioController {
     void setSeekAll(final boolean seekAll);
-    boolean getSeekAll();
+
 
     void powerOn();
     void powerOff();
-    boolean isPoweredOn();
-    PowerStatus getPowerStatus();
 
     void muteOn();
     void muteOff();
@@ -42,4 +40,34 @@ public interface RadioController {
     void seekDown();
 
     void requestUpdate(final RadioCommand command);
+
+    // Value getters
+    boolean getSeekAll();
+    boolean isPoweredOn();
+    PowerStatus getPowerStatus();
+    boolean getMute();
+    int getSignalStrength();
+    TuneInfo getTune();
+    boolean getHdActive();
+    boolean getHdStreamLock();
+    int getHdSignalStrength();
+    int getHdSubchannel();
+    int getHdSubchannelCount();
+    // boolean getHdEnableHdTuner()  //TODO: not implementing yet because not sure what this is
+    String getHdTitle();
+    String getHdArtist();
+    String getHdCallsign();
+    String getHdStationName();
+    String getUniqueId();
+    String getApiVersion();
+    String getHardwareVersion();
+    boolean getRdsEnabled();
+    String getRdsGenre();
+    String getRdsProgramService();
+    String getRdsRadioText();
+    int getVolume();
+    int getBass();
+    int getTreble();
+    int getCompression();
+
 }

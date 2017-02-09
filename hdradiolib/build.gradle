@@ -29,4 +29,5 @@ dependencies {
     testCompile 'junit:junit:4.12'
     compile files('libs/d2xx.jar')
     androidTestCompile 'junit:junit:4.12'
+    compile files('libs/usbserial.jar')
 }
