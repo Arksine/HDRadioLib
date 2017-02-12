@@ -2,7 +2,6 @@ package com.arksine.hdradiolib;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.hardware.usb.UsbDevice;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -11,10 +10,13 @@ import android.os.SystemClock;
 import android.support.annotation.NonNull;
 import android.util.Log;
 
+import com.arksine.hdradiolib.drivers.ArduinoDriver;
+import com.arksine.hdradiolib.drivers.MJSRadioDriver;
 import com.arksine.hdradiolib.enums.PowerStatus;
 import com.arksine.hdradiolib.enums.RadioBand;
 import com.arksine.hdradiolib.enums.RadioCommand;
 import com.arksine.hdradiolib.enums.RadioConstant;
+import com.arksine.hdradiolib.drivers.RadioDriver;
 import com.arksine.hdradiolib.enums.RadioError;
 import com.arksine.hdradiolib.enums.RadioOperation;
 
@@ -29,10 +31,10 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class HDRadio {
     private static final String TAG = HDRadio.class.getSimpleName();
-    private static final boolean DEBUG = true;
+    public static final boolean DEBUG = true;
     private SharedPreferences mRadioPreferences;
 
-    public enum DriverType {MJS_DRIVER, USB_SERIAL_TEST_DRIVER, CUSTOM}
+    public enum DriverType {MJS_DRIVER, ARDUINO_DRIVER, CUSTOM}
 
     private static final int POST_COMMAND_DELAY = 150;
     private static final int POST_TUNE_DELAY = 1000;
@@ -45,10 +47,8 @@ public class HDRadio {
     private EventHandler mEventHandler;
     private Handler mControlHandler;
     private RadioDriver mRadioDriver;
-    private volatile long mPreviousTuneTime = 0;        // These longs are only accessed by syncrhonized
     private volatile long mPreviousPowerTime = 0;       // methods, so atomic access is a given
     private AtomicReference<PowerStatus> mPowerStatus = new AtomicReference<>(PowerStatus.POWERED_OFF);
-    //private AtomicBoolean mIsPoweredOn = new AtomicBoolean(false);
     private AtomicBoolean mIsWaiting = new AtomicBoolean(false);
     private AtomicBoolean mSeekAll = new AtomicBoolean(true);
 
@@ -542,24 +542,43 @@ public class HDRadio {
             public void onTuneReceived() {
                 HDRadio.this.mControlHandler.postDelayed(mRequestSignalRunnable, 1000);
             }
+
+            @Override
+            public void onInitComplete() {
+                // If initializing, set to Powered on, unmute, and fire event
+                if (HDRadio.this.mPowerStatus.compareAndSet(PowerStatus.INITIALIZING,
+                        PowerStatus.POWERED_ON)) {
+
+                    HDRadio.this.mControlHandler.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            // release RTS (hardware mute)
+                            HDRadio.this.mRadioDriver.clearRts();
+                        }
+                    }, 200);
+
+                    // Dispatch power on callback
+                    HDRadio.this.mEventHandler.handlePowerOnEvent();
+                }
+            }
         };
         this.mDataHandler = new RadioDataHandler(dataLooper, this.mEventHandler, dataCbs,
                 this.mRadioValues);
 
         switch (dType) {
             case MJS_DRIVER:
-                this.mRadioDriver = new MjsRadioDriver(mContext);
+                this.mRadioDriver = new MJSRadioDriver(mContext);
                 this.mRadioDriver.initialize(mDataHandler, mDriverEvents);
                 break;
-            case USB_SERIAL_TEST_DRIVER:
-                this.mRadioDriver = new UsbSerialTestDriver(mContext);
+            case ARDUINO_DRIVER:
+                this.mRadioDriver = new ArduinoDriver(mContext);
                 this.mRadioDriver.initialize(mDataHandler,mDriverEvents);
                 break;
             case CUSTOM:
                 Log.i(TAG, "Using custom driver");
                 break;
             default:
-                this.mRadioDriver = new MjsRadioDriver(mContext);
+                this.mRadioDriver = new MJSRadioDriver(mContext);
                 this.mRadioDriver.initialize(mDataHandler, mDriverEvents);
                 Log.i(TAG, "Invalid Driver Request, use Mjs Driver");
         }
@@ -615,7 +634,9 @@ public class HDRadio {
     }
 
     /**
-     * Requests a list of connected HD Radios from the driver.
+     * Requests a list of devices connected to the phone/tablet that could potentially be
+     * a HD Radio.  The list depends upon the driver, for example the MJS Cable will only return
+     * UsbDevice types with the correct VID/PID
      *
      * @param listType      The Class representing the type of item in the arraylist.  For example,
      *                      if we expect to receive a type ArrayList<UsbDevice>, the listType
@@ -623,7 +644,7 @@ public class HDRadio {
      *
      * @return  An array list radio devices found by the corresponding driver
      */
-    public <T> ArrayList<T> getRadioList(Class<T> listType) {
+    public <T> ArrayList<T> getDeviceList(Class<T> listType) {
         return this.mRadioDriver.getDeviceList(listType);
     }
 
@@ -677,8 +698,10 @@ public class HDRadio {
                     }
                 }
 
+                // Timeout was met, exit
                 if (this.mIsWaiting.get()) {
-                    //TODO: the timeout was met, this is an error.  Send an error callback
+                    this.mEventHandler.handleDeviceErrorEvent(RadioError.POWER_ERROR);
+                    this.mPowerStatus.set(PowerStatus.POWERED_OFF);
                     return;
                 }
 
@@ -698,15 +721,12 @@ public class HDRadio {
     private void initializeRadio() {
         this.mPowerStatus.set(PowerStatus.INITIALIZING);
 
-        // sleep for 500ms after receiving power on confirmation
+        // sleep for 200ms after receiving power on confirmation
         try {
-            Thread.sleep(500);
+            Thread.sleep(200);
         } catch (InterruptedException e) {
             Log.w(TAG, e.getMessage());
         }
-
-        // Dispatch power on callback
-        this.mEventHandler.handlePowerOnEvent();
 
         // Retreived persistent values
         this.mSeekAll.set(this.mRadioPreferences.getBoolean("radiolib_pref_key_seekall", true));
@@ -715,12 +735,9 @@ public class HDRadio {
                 .getString("radiolib_pref_key_band", "FM"));
         int subch = this.mRadioPreferences.getInt("radiolib_pref_key_subchannel", 0);
         TuneInfo savedTune = new TuneInfo(band, frequency, subch);
-        int volume = this.mRadioPreferences.getInt("radiolib_pref_key_volume", 45);
-        int bass = this.mRadioPreferences.getInt("radiolib_pref_key_bass", 15);
-        int treble = this.mRadioPreferences.getInt("radiolib_pref_key_treble", 15);
-
-        // release RTS (hardware mute)
-
+        int volume = this.mRadioPreferences.getInt("radiolib_pref_key_volume", 50);
+        int bass = this.mRadioPreferences.getInt("radiolib_pref_key_bass", 10);
+        int treble = this.mRadioPreferences.getInt("radiolib_pref_key_treble", 10);
 
         // TODO: should I set the RF_MODULATOR command?  The real controller does.
         this.mController.tune(savedTune);
@@ -728,15 +745,14 @@ public class HDRadio {
         this.mController.setBass(bass);
         this.mController.setTreble(treble);
 
+        if (DEBUG) {
+            this.mController.requestUpdate(RadioCommand.HD_ENABLE_HD_TUNER);
+            this.mController.requestUpdate(RadioCommand.COMPRESSION);
+            this.mController.requestUpdate(RadioCommand.RF_MODULATOR);
+        }
         this.mController.requestUpdate(RadioCommand.HD_UNIQUE_ID);
         this.mController.requestUpdate(RadioCommand.HD_HW_VERSION);
         this.mController.requestUpdate(RadioCommand.HD_API_VERSION);
-
-        // TODO: should probably do this after volume is set and returned
-        this.mRadioDriver.clearRts();
-
-        // TODO: should I wait until the tune reply is received before I set this and send the power on callback?
-        this.mPowerStatus.set(PowerStatus.POWERED_ON);
     }
 
 
@@ -765,7 +781,22 @@ public class HDRadio {
                 this.mControlHandler.removeCallbacks(mRequestSignalRunnable);
                 this.mControlHandler.removeCallbacks(mSetSubchannelRunnable);
 
+                // mute before power off
+                this.mRadioDriver.raiseRts();
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+
                 this.mRadioDriver.clearDtr();   // DTR off = Power off
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+
+                this.mRadioDriver.clearRts();
 
                 // Because the radio won't send a power off reply, set the power off variable to false
                 this.mRadioValues.mPower.set(false);
@@ -824,7 +855,7 @@ public class HDRadio {
 
         SetSubchannelRunnable() {}
 
-        public void setSubchannel(int subchannel) {
+        void setSubchannel(int subchannel) {
             this.mRequestedSubchannel = subchannel;
             this.mRequestCount = 0;
             HDRadio.this.mControlHandler.post(this);

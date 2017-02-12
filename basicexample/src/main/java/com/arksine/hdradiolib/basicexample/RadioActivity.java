@@ -89,7 +89,10 @@ public class RadioActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
 
+        // TODO: need to move open and close, issues arrive when popups occur (like the USB request popup
         mHdRadio.open();
+
+
         // Call this to adjust the scrollview size if the window changes
         setupScrollView();
         mTextSwapAnimator.startAnimation();
@@ -129,6 +132,10 @@ public class RadioActivity extends AppCompatActivity {
 
                     mIsConnected.set(false);
                 } else {
+                    // Check the serial number
+                    String id = mHdRadio.getDeviceId();
+                    Log.i(TAG, "Radio Opened successfully, device id: " + id);
+
                     // Get the controller interface
                     mController = controller;
                     mIsConnected.set(true);
@@ -452,7 +459,7 @@ public class RadioActivity extends AppCompatActivity {
             }
         };
 
-        mHdRadio = new HDRadio(this, callbacks, HDRadio.DriverType.USB_SERIAL_TEST_DRIVER);
+        mHdRadio = new HDRadio(this, callbacks, HDRadio.DriverType.ARDUINO_DRIVER);
     }
 
     private void initViews() {

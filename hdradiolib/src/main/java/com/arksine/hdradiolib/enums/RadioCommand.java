@@ -52,7 +52,7 @@ public enum RadioCommand implements Parcelable {
     VOLUME(new byte[]{(byte)0x03, (byte)0x04}, Type.INT),
     BASS(new byte[]{(byte)0x04, (byte)0x04}, Type.INT),
     TREBLE(new byte[]{(byte)0x05, (byte)0x04}, Type.INT),
-    COMPRESSION(new byte[]{(byte)0x06, (byte)0x04}, Type.INT), // TODO: need to test this, doesn't appear to retun an int
+    COMPRESSION(new byte[]{(byte)0x05, (byte)0x05}, Type.INT), // TODO: need to test this, doesn't appear to retun an int
     RF_MODULATOR(new byte[]{(byte)0x01, (byte)0x05}, Type.BOOLEAN);  // TODO: This is actually INT / Boolean
 
     private static final String TAG = RadioCommand.class.getSimpleName();

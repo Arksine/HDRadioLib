@@ -1,4 +1,4 @@
-package com.arksine.hdradiolib;
+package com.arksine.hdradiolib.drivers;
 
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
@@ -12,9 +12,9 @@ import android.util.Log;
 import android.widget.Toast;
 
 import com.arksine.hdradiolib.enums.RadioError;
-import com.felhr.deviceids.CH34xIds;
-import com.felhr.usbserial.UsbSerialDevice;
-import com.felhr.usbserial.UsbSerialInterface;
+import com.arksine.deviceids.CH34xIds;
+import com.arksine.usbserial.UsbSerialDevice;
+import com.arksine.usbserial.UsbSerialInterface;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -25,8 +25,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Test driver to control the MJS cable with the USBSerial Library instead of the D2XX Library
  */
 
-class UsbSerialTestDriver extends RadioDriver {
-    private static final String TAG = HDRadio.class.getSimpleName();
+public class MJSRadioDriver extends RadioDriver {
+    private static final String TAG = MJSRadioDriver.class.getSimpleName();
     private static final boolean DEBUG = true;
     private static final String ACTION_USB_PERMISSION = "com.arksine.hdradiolib.USB_PERMISSION";
     private static final String ACTION_USB_DETACHED = "android.hardware.usb.action.USB_DEVICE_DETACHED";
@@ -47,7 +47,7 @@ class UsbSerialTestDriver extends RadioDriver {
             if (action.equals(ACTION_USB_DETACHED)) {
                 synchronized (this) {
                     UsbDevice uDev = (UsbDevice) intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
-                    if (uDev.equals(UsbSerialTestDriver.this.mUsbDevice)) {
+                    if (uDev.equals(MJSRadioDriver.this.mUsbDevice)) {
 
                         Toast.makeText(context, "USB Device Disconnected",
                                 Toast.LENGTH_SHORT).show();
@@ -56,8 +56,8 @@ class UsbSerialTestDriver extends RadioDriver {
                         Thread errorThread = new Thread(new Runnable() {
                             @Override
                             public void run() {
-                                UsbSerialTestDriver.this.mDriverEvents.onError(RadioError.CONNECTION_ERROR);
-                                UsbSerialTestDriver.this.close();
+                                MJSRadioDriver.this.mDriverEvents.onError(RadioError.CONNECTION_ERROR);
+                                MJSRadioDriver.this.close();
                             }
                         });
                         errorThread.start();
@@ -74,11 +74,11 @@ class UsbSerialTestDriver extends RadioDriver {
         public void onReceivedData(byte[] buffer)
         {
             // Send the data back to the instantiating class via callback
-            UsbSerialTestDriver.this.handleIncomingBytes(buffer);
+            MJSRadioDriver.this.handleIncomingBytes(buffer);
         }
     };
 
-    UsbSerialTestDriver(Context context) {
+    public MJSRadioDriver(Context context) {
         this.mContext = context;
     }
 
@@ -104,6 +104,11 @@ class UsbSerialTestDriver extends RadioDriver {
         }
         return hdDeviceList;
     }
+
+    public static void addSupportedDevice(String vendorId, String productId) {
+        // TODO:
+    }
+
 
     @Override
     public String getIdentifier() {
@@ -219,7 +224,7 @@ class UsbSerialTestDriver extends RadioDriver {
 
                 this.mUsbPermissonGranted = false;
                 // request permission and wait
-                PendingIntent pi = PendingIntent.getBroadcast(UsbSerialTestDriver.this.mContext,
+                PendingIntent pi = PendingIntent.getBroadcast(MJSRadioDriver.this.mContext,
                         0, new Intent(ACTION_USB_PERMISSION), 0);
                 this.mUsbManager.requestPermission(device, pi);
 
@@ -247,28 +252,25 @@ class UsbSerialTestDriver extends RadioDriver {
         @Override
         public void run() {
             synchronized (OPEN_LOCK) {
-                if (UsbSerialTestDriver.this.isOpen()) {
+                if (MJSRadioDriver.this.isOpen()) {
                     Log.i(TAG, "Radio already open");
                     // Dispatch On Opened Callback
-                    UsbSerialTestDriver.this.mDriverEvents.onOpened(true);
+                    // MJSRadioDriver.this.mDriverEvents.onOpened(true);
                     return;
                 }
 
-                // TODO: currently only support MJS cables, want to support MCUs and Bluetooth
-                //       connections as well
-
-                this.mUsbManager = (UsbManager)(UsbSerialTestDriver.this.mContext)
+                this.mUsbManager = (UsbManager)(MJSRadioDriver.this.mContext)
                         .getSystemService(Context.USB_SERVICE);
-                ArrayList<UsbDevice> hdDeviceList = UsbSerialTestDriver.this.getDeviceList(UsbDevice.class);
+                ArrayList<UsbDevice> hdDeviceList = MJSRadioDriver.this.getDeviceList(UsbDevice.class);
 
                 if (hdDeviceList.isEmpty()) {
                     // no mjs cable found, exit
-                    UsbSerialTestDriver.this.mDriverEvents.onOpened(false);
+                    MJSRadioDriver.this.mDriverEvents.onOpened(false);
                     return;
                 }
 
                 IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
-                UsbSerialTestDriver.this.mContext.registerReceiver(usbPermissonReceiver, filter);
+                MJSRadioDriver.this.mContext.registerReceiver(usbPermissonReceiver, filter);
                 UsbDevice requestedDevice = null;
                 UsbDeviceConnection usbConnection = null;
 
@@ -299,43 +301,41 @@ class UsbSerialTestDriver extends RadioDriver {
                     }
                 }
 
-                UsbSerialTestDriver.this.mContext.unregisterReceiver(usbPermissonReceiver);
+                MJSRadioDriver.this.mContext.unregisterReceiver(usbPermissonReceiver);
 
                 // Didn't get a valid device connection
                 if (usbConnection == null) {
                     Log.e(TAG, "Unable to open Usb connection");
-                    UsbSerialTestDriver.this.mDriverEvents.onOpened(false);
+                    MJSRadioDriver.this.mDriverEvents.onOpened(false);
                     return;
                 }
 
                 // We have a usb device connection, open the serial port with dtr and rts to default low
-                UsbSerialTestDriver.this.mSerialPort = UsbSerialDevice
+                MJSRadioDriver.this.mSerialPort = UsbSerialDevice
                         .createUsbSerialDevice(requestedDevice, usbConnection, false);
-                if (UsbSerialTestDriver.this.mSerialPort != null) {
-                    if (UsbSerialTestDriver.this.mSerialPort.open()) {
+                if (MJSRadioDriver.this.mSerialPort != null) {
+                    if (MJSRadioDriver.this.mSerialPort.open()) {
                         // Open success
-                        // TODO: Forked Serial library defaults DTR off.  Some MCUs may require DTR on
-                        //mSerialPort.setDTR(true);  // raise DTR for MCUs
                         mSerialPort.setRTS(true);
                         mSerialPort.setBaudRate(115200);
                         mSerialPort.setDataBits(UsbSerialInterface.DATA_BITS_8);
                         mSerialPort.setStopBits(UsbSerialInterface.STOP_BITS_1);
                         mSerialPort.setParity(UsbSerialInterface.PARITY_NONE);
                         mSerialPort.setFlowControl(UsbSerialInterface.FLOW_CONTROL_OFF);
-                        mSerialPort.read(UsbSerialTestDriver.this.mReadCallback);
+                        mSerialPort.read(MJSRadioDriver.this.mReadCallback);
 
                         // Set the radio's Usb device
-                        UsbSerialTestDriver.this.mUsbDevice = requestedDevice;
-                        UsbSerialTestDriver.this.mSerialNumber = usbConnection.getSerial();
+                        MJSRadioDriver.this.mUsbDevice = requestedDevice;
+                        MJSRadioDriver.this.mSerialNumber = usbConnection.getSerial();
                         Log.i(TAG, "Device Serial Number: " + mSerialNumber);
 
                         // Register the Broadcast receiver to listen for Radio Disconnections
-                        if (!UsbSerialTestDriver.this.mDisconnectReceiverRegistered) {
+                        if (!MJSRadioDriver.this.mDisconnectReceiverRegistered) {
                             IntentFilter disconnectFilter = new IntentFilter(ACTION_USB_DETACHED);
-                            UsbSerialTestDriver.this.mContext
-                                    .registerReceiver(UsbSerialTestDriver.this.mDisconnectReceiver,
+                            MJSRadioDriver.this.mContext
+                                    .registerReceiver(MJSRadioDriver.this.mDisconnectReceiver,
                                             disconnectFilter);
-                            UsbSerialTestDriver.this.mDisconnectReceiverRegistered = true;
+                            MJSRadioDriver.this.mDisconnectReceiverRegistered = true;
                         }
 
                         // Some micro controllers need time to initialize before you can communicate.
@@ -349,15 +349,15 @@ class UsbSerialTestDriver extends RadioDriver {
                         }
 
                         // Open success
-                        UsbSerialTestDriver.this.mIsConnected.set(true);
-                        UsbSerialTestDriver.this.mDriverEvents.onOpened(true);
+                        MJSRadioDriver.this.mIsConnected.set(true);
+                        MJSRadioDriver.this.mDriverEvents.onOpened(true);
                     } else {
-                        UsbSerialTestDriver.this.mDriverEvents.onOpened(false);
+                        MJSRadioDriver.this.mDriverEvents.onOpened(false);
                     }
                 } else {
-                    Log.e(TAG, "Usb Device not a support serial device");
+                    Log.e(TAG, "Usb Device not a supported serial device");
                     // Dispatch On Opened Callback
-                    UsbSerialTestDriver.this.mDriverEvents.onOpened(false);
+                    MJSRadioDriver.this.mDriverEvents.onOpened(false);
                 }
             }
         }

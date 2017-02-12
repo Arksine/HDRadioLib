@@ -16,7 +16,8 @@ public enum RadioError implements Parcelable {
     RTS_CLEAR_ERROR,
     DTR_RAISE_ERROR,
     DTR_CLEAR_ERROR,
-    CONNECTION_ERROR;
+    CONNECTION_ERROR,
+    POWER_ERROR;
 
     public static final RadioError[] ERROR_ARRAY = RadioError.values();
     public static final Creator<RadioError> CREATOR = new Creator<RadioError>() {

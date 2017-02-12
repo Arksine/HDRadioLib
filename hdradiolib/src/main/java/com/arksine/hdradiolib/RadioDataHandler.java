@@ -17,9 +17,9 @@ import java.nio.ByteOrder;
  * Receives bytes of data from the HD Radio and parses it.
  */
 
-class RadioDataHandler extends Handler {
+public class RadioDataHandler extends Handler {
     private static final String TAG = RadioDataHandler.class.getSimpleName();
-    private static final boolean DEBUG = true;
+    private static final boolean DEBUG = HDRadio.DEBUG;
 
 
     // Packet parsing vars
@@ -41,6 +41,7 @@ class RadioDataHandler extends Handler {
     interface DataHandlerEvents {
         void onPowerOnReceived();
         void onTuneReceived();
+        void onInitComplete();
     }
 
     private DataHandlerEvents mDataHandlerEvents;
@@ -294,6 +295,9 @@ class RadioDataHandler extends Handler {
             case HD_API_VERSION: {
                 String apiVersion = this.parseString(msgBuf);
                 this.mRadioValues.mApiVersion.set(apiVersion);
+
+                // This is the last variable requested during initialization, so execute onInit Event
+                this.mDataHandlerEvents.onInitComplete();
                 break;
             }
             case HD_HW_VERSION: {

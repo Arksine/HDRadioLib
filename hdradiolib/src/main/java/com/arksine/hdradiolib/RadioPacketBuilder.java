@@ -18,7 +18,7 @@ import java.nio.ByteOrder;
 
 class RadioPacketBuilder {
     private static final String TAG = RadioPacketBuilder.class.getSimpleName();
-    private static final boolean DEBUG = true;
+    private static final boolean DEBUG = HDRadio.DEBUG;
 
     private RadioPacketBuilder() {}
 
