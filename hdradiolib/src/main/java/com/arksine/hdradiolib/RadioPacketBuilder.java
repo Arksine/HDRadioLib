@@ -267,6 +267,16 @@ class RadioPacketBuilder {
                 }
 
                 break;
+            case RF_MODULATOR: {
+                // TODO: currently only setting to OFF.  Add functionality to turn on in the future
+                if (!(data instanceof  Integer)) {
+                    Log.i(TAG, "Invalid data received for command: " + command);
+                    return null;
+                }
+                dataBuf.put(RadioConstant.ZERO.getBytes());
+                dataBuf.putInt((int)data);
+                break;
+            }
             default:
                 Log.i(TAG, "Invalid command, cannot set: " + command);
                 return null;

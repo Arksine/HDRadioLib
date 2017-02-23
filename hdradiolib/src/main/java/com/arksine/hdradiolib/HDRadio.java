@@ -689,23 +689,26 @@ public class HDRadio {
                 this.mRadioDriver.raiseDtr();
 
                 // Wait until the radio gives a power on response, with a 10 second timeout
+                boolean timedOut = false;
                 synchronized (this) {
                     try {
                         this.mIsWaiting.set(true);
                         wait(10000);
                     } catch (InterruptedException e) {
                         e.printStackTrace();
+                    } finally {
+                        // Timeout was met, exit
+                        if (this.mIsWaiting.compareAndSet(true, false)) {
+                            this.mEventHandler.handleDeviceErrorEvent(RadioError.POWER_ERROR);
+                            this.mPowerStatus.set(PowerStatus.POWERED_OFF);
+                            timedOut = true;
+                        }
                     }
                 }
 
-                // Timeout was met, exit
-                if (this.mIsWaiting.get()) {
-                    this.mEventHandler.handleDeviceErrorEvent(RadioError.POWER_ERROR);
-                    this.mPowerStatus.set(PowerStatus.POWERED_OFF);
-                    return;
+                if (!timedOut) {
+                    this.initializeRadio();
                 }
-
-                this.initializeRadio();
 
             }
 
@@ -739,7 +742,14 @@ public class HDRadio {
         int bass = this.mRadioPreferences.getInt("radiolib_pref_key_bass", 10);
         int treble = this.mRadioPreferences.getInt("radiolib_pref_key_treble", 10);
 
-        // TODO: should I set the RF_MODULATOR command?  The real controller does.
+        // TODO: Temporarily turn off RF Modulator
+        this.mControlHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                HDRadio.this.sendRadioCommand(RadioCommand.RF_MODULATOR, RadioOperation.SET, 881);
+            }
+        });
+
         this.mController.tune(savedTune);
         this.mController.setVolume(volume);
         this.mController.setBass(bass);

@@ -20,12 +20,6 @@ android {
     }
 }
 
-repositories {
-    flatDir {
-        dirs 'libs'
-    }
-}
-
 
 dependencies {
     compile fileTree(include: ['*.jar'], dir: 'libs')
@@ -35,5 +29,4 @@ dependencies {
     compile 'com.android.support:appcompat-v7:25.0.1'
     testCompile 'junit:junit:4.12'
     androidTestCompile 'junit:junit:4.12'
-    compile files('libs/usbserial.jar')
 }

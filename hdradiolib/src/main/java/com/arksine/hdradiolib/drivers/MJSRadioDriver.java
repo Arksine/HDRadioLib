@@ -13,8 +13,8 @@ import android.widget.Toast;
 
 import com.arksine.hdradiolib.enums.RadioError;
 import com.arksine.deviceids.CH34xIds;
-import com.arksine.usbserial.UsbSerialDevice;
-import com.arksine.usbserial.UsbSerialInterface;
+import com.arksine.usbserialex.UsbSerialDevice;
+import com.arksine.usbserialex.UsbSerialInterface;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -191,6 +191,8 @@ public class MJSRadioDriver extends RadioDriver {
 
         private String mRequestedSerialNumber;
         private UsbManager mUsbManager;
+
+        // TODO: make the below booleans atomic
         private volatile boolean mIsWaiting = false;
         private volatile boolean mUsbPermissonGranted;
 

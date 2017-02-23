@@ -1,6 +1,5 @@
 package com.arksine.hdradiolib.drivers;
 
-import android.os.Handler;
 import android.os.Message;
 
 import com.arksine.hdradiolib.RadioDataHandler;

@@ -4,8 +4,6 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.Message;
-import android.provider.MediaStore;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.DisplayMetrics;
@@ -36,6 +34,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class RadioActivity extends AppCompatActivity {
     private static final String TAG = RadioActivity.class.getSimpleName();
 
+    // Change this to test different drivers
+    private static final HDRadio.DriverType DRIVER = HDRadio.DriverType.ARDUINO_DRIVER;
 
     // Radio Library Members
     private HDRadio mHdRadio;
@@ -82,16 +82,11 @@ public class RadioActivity extends AppCompatActivity {
         mTextSwapAnimator = new TextSwapAnimator(mRadioInfoText);
         mClearViewsRunnable.run();
 
-
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-
-        // TODO: need to move open and close, issues arrive when popups occur (like the USB request popup
-        mHdRadio.open();
-
 
         // Call this to adjust the scrollview size if the window changes
         setupScrollView();
@@ -103,6 +98,18 @@ public class RadioActivity extends AppCompatActivity {
     protected void onPause() {
         super.onPause();
         mTextSwapAnimator.stopAnimation();
+        exit();
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        mHdRadio.open();
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
         exit();
     }
 
@@ -459,7 +466,7 @@ public class RadioActivity extends AppCompatActivity {
             }
         };
 
-        mHdRadio = new HDRadio(this, callbacks, HDRadio.DriverType.ARDUINO_DRIVER);
+        mHdRadio = new HDRadio(this, callbacks, DRIVER);
     }
 
     private void initViews() {

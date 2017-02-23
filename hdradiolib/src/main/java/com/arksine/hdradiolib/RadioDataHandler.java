@@ -355,6 +355,12 @@ public class RadioDataHandler extends Handler {
                 this.mEventHandler.handleCompressionEvent(compression);
                 break;
             }
+            case RF_MODULATOR: {
+                // TODO: do something with this
+                int unknown = this.parseInteger(msgBuf);
+                int rfFreq = this.parseInteger(msgBuf);
+                break;
+            }
             default:
                 Log.i(TAG, "Invalid Command");
         }
