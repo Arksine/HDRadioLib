@@ -21,7 +21,7 @@ captures/
 bin/
 gen/
 out/
-.externalNativeBuild
+.externalNativeBuild/
 
 # Built application files
 *.apk
