@@ -8,7 +8,6 @@ import android.content.IntentFilter;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbManager;
-import android.util.Log;
 import android.widget.Toast;
 
 import com.arksine.hdradiolib.enums.RadioError;
@@ -20,12 +19,13 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import timber.log.Timber;
+
 /**
  * Driver for Arduino connected to HD Radio, uploaded with the hdradiodriver sketch
  */
 
 public class ArduinoDriver extends RadioDriver {
-    private static final String TAG = ArduinoDriver.class.getSimpleName();
     private static final String ACTION_USB_PERMISSION = "com.arksine.hdradiolib.USB_PERMISSION";
     private static final String ACTION_USB_DETACHED = "android.hardware.usb.action.USB_DEVICE_DETACHED";
     private final Object OPEN_LOCK = new Object();
@@ -148,7 +148,7 @@ public class ArduinoDriver extends RadioDriver {
                  *  TODO: I bet the 3rd ID (sub pid ) is 937C
                  */
                 if ((uDevice.getVendorId() == 1027) && (uDevice.getProductId() == 37752)) {
-                    Log.v(TAG, "MJS Cable found, skipping from list");
+                    Timber.v("MJS Cable found, skipping from list");
                     break;
                 }
 
@@ -288,7 +288,7 @@ public class ArduinoDriver extends RadioDriver {
                 }
 
                 if (!this.mUsbPermissonGranted.get()) {
-                    Log.e(TAG, "Usb Permission not granted to device: " + device.getDeviceName());
+                    Timber.e("Usb Permission not granted to device: %s", device.getDeviceName());
                     // Dispatch On Opened Callback
 
                     return null;
@@ -297,7 +297,7 @@ public class ArduinoDriver extends RadioDriver {
 
             UsbDeviceConnection deviceConnection = mUsbManager.openDevice(device);
             if (deviceConnection == null) {
-                Log.e(TAG, "Unable to open Usb device");
+                Timber.i("Unable to open Usb device");
             }
             // Open Serial device with DTR/RTS high
             UsbSerialDevice serialDevice = UsbSerialDevice
@@ -323,7 +323,7 @@ public class ArduinoDriver extends RadioDriver {
                     try {
                         Thread.sleep(sleeptime);
                     } catch (InterruptedException e) {
-                        Log.w(TAG, e.getMessage());
+                        Timber.w(e);
                     }
 
                     // Write init string to device
@@ -340,7 +340,7 @@ public class ArduinoDriver extends RadioDriver {
                     }
 
                     if (!this.mIdValid.get()) {
-                        Log.e(TAG, "No Valid Id returned from device");
+                        Timber.w("No Valid Id returned from Arduino/MCU");
                         serialDevice.close();
                         return null;
                     }
@@ -348,11 +348,11 @@ public class ArduinoDriver extends RadioDriver {
                     return serialDevice;
 
                 } else {
-                    Log.e(TAG, "Usb Device not a supported serial device");
+                    Timber.w("Usb Device not a supported serial device");
                     return null;
                 }
             } else {
-                Log.e(TAG, "Usb Device not a supported serial device");
+                Timber.w("Usb Device not a supported serial device");
                 return null;
 
             }
@@ -364,7 +364,7 @@ public class ArduinoDriver extends RadioDriver {
         public void run() {
             synchronized (OPEN_LOCK) {
                 if (ArduinoDriver.this.isOpen()) {
-                    Log.i(TAG, "Radio already open");
+                    Timber.i("Radio already open");
                     // Dispatch On Opened Callback
                     // ArduinoDriver.this.mDriverEvents.onOpened(true);
                     return;
@@ -376,6 +376,7 @@ public class ArduinoDriver extends RadioDriver {
 
                 if (hdDeviceList.isEmpty()) {
                     // no mjs cable found, exit
+                    Timber.d("No devices found");
                     ArduinoDriver.this.mDriverEvents.onOpened(false);
                     return;
                 }
@@ -410,7 +411,7 @@ public class ArduinoDriver extends RadioDriver {
                     }
 
                     if (count == hdDeviceList.size() && ArduinoDriver.this.mSerialPort == null) {
-                        Log.e(TAG, "Unable to find MCU matching requested ID: " +
+                        Timber.i("Unable to find MCU matching requested ID: %s",
                                 this.mRequestedId);
                     }
                 }
@@ -419,7 +420,7 @@ public class ArduinoDriver extends RadioDriver {
 
                 // Didn't get a valid device connection
                 if (ArduinoDriver.this.mSerialPort == null) {
-                    Log.e(TAG, "Unable to open Usb serial port");
+                    Timber.i("Unable to open Usb serial port");
                     ArduinoDriver.this.mDriverEvents.onOpened(false);
                     return;
                 }

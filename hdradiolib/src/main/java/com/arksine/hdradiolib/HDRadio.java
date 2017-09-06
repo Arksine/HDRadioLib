@@ -8,7 +8,6 @@ import android.os.Looper;
 import android.os.Process;
 import android.os.SystemClock;
 import android.support.annotation.NonNull;
-import android.util.Log;
 
 import com.arksine.hdradiolib.drivers.ArduinoDriver;
 import com.arksine.hdradiolib.drivers.MJSRadioDriver;
@@ -24,14 +23,14 @@ import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import timber.log.Timber;
+
 /**
  * Library to communicate with a DirectedHD DMHD-1000 HD Radio via USB using the MJS Gadgets
  * interface cable
  */
 
 public class HDRadio {
-    private static final String TAG = HDRadio.class.getSimpleName();
-    public static final boolean DEBUG = true;
     private SharedPreferences mRadioPreferences;
 
     public enum DriverType {MJS_DRIVER, ARDUINO_DRIVER, CUSTOM}
@@ -575,12 +574,12 @@ public class HDRadio {
                 this.mRadioDriver.initialize(mDataHandler,mDriverEvents);
                 break;
             case CUSTOM:
-                Log.i(TAG, "Using custom driver");
+                Timber.i("Using custom driver");
                 break;
             default:
                 this.mRadioDriver = new MJSRadioDriver(mContext);
                 this.mRadioDriver.initialize(mDataHandler, mDriverEvents);
-                Log.i(TAG, "Invalid Driver Request, use Mjs Driver");
+                Timber.i("Invalid Driver Request, defaulting Mjs Driver");
         }
 
     }
@@ -590,7 +589,7 @@ public class HDRadio {
         if (!this.isOpen()) {
             this.mRadioDriver.openById(deviceId);
         } else {
-            Log.i(TAG, "Device already open.");
+            Timber.i("HD Radio already open.");
         }
     }
 
@@ -601,7 +600,7 @@ public class HDRadio {
         if (!this.isOpen()) {
             this.mRadioDriver.open();
         } else {
-            Log.i(TAG, "Device already open.");
+            Timber.i("HD Radio already open.");
         }
     }
 
@@ -663,7 +662,7 @@ public class HDRadio {
         synchronized (POWER_LOCK) {
             // make sure that the device is open
             if (!this.isOpen()) {
-                Log.e(TAG, "Device not open, cannot power on");
+                Timber.e("Device not open, cannot power on");
                 return;
             }
 
@@ -673,10 +672,9 @@ public class HDRadio {
                 // sleep
                 try {
                     Thread.sleep(powerDelay);
-                    if (DEBUG)
-                        Log.v(TAG, "Power delay, slept for: " + powerDelay);
+                    Timber.d("Power delay, slept for: %d", powerDelay);
                 } catch (InterruptedException e) {
-                    e.printStackTrace();
+                   Timber.w(e);
                 }
             }
 
@@ -728,7 +726,7 @@ public class HDRadio {
         try {
             Thread.sleep(200);
         } catch (InterruptedException e) {
-            Log.w(TAG, e.getMessage());
+            Timber.w(e);
         }
 
         // Retreived persistent values
@@ -755,7 +753,7 @@ public class HDRadio {
         this.mController.setBass(bass);
         this.mController.setTreble(treble);
 
-        if (DEBUG) {
+        if (BuildConfig.DEBUG) {
             this.mController.requestUpdate(RadioCommand.HD_ENABLE_HD_TUNER);
             this.mController.requestUpdate(RadioCommand.COMPRESSION);
             this.mController.requestUpdate(RadioCommand.RF_MODULATOR);
@@ -777,10 +775,9 @@ public class HDRadio {
                 // sleep
                 try {
                     Thread.sleep(powerDelay);
-                    if (DEBUG)
-                        Log.v(TAG, "Power delay, slept for: " + powerDelay);
+                    Timber.v("Power delay, slept for: %d", powerDelay);
                 } catch (InterruptedException e) {
-                    e.printStackTrace();
+                    Timber.w(e);
                 }
             }
 
@@ -796,14 +793,14 @@ public class HDRadio {
                 try {
                     Thread.sleep(50);
                 } catch (InterruptedException e) {
-                    e.printStackTrace();
+                    Timber.w(e);
                 }
 
                 this.mRadioDriver.clearDtr();   // DTR off = Power off
                 try {
                     Thread.sleep(50);
                 } catch (InterruptedException e) {
-                    e.printStackTrace();
+                    Timber.w(e);
                 }
 
                 this.mRadioDriver.clearRts();
@@ -851,10 +848,10 @@ public class HDRadio {
             try {
                 Thread.sleep(POST_COMMAND_DELAY);
             } catch (InterruptedException e) {
-                e.printStackTrace();
+                Timber.w(e);
             }
         } else {
-            Log.i(TAG, "Invalid Radio Packet, cannot send");
+            Timber.i("Invalid Radio Packet, cannot send");
         }
     }
 

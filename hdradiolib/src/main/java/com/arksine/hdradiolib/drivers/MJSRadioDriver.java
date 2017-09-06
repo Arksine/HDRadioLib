@@ -8,7 +8,6 @@ import android.content.IntentFilter;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbManager;
-import android.util.Log;
 import android.widget.Toast;
 
 import com.arksine.hdradiolib.enums.RadioError;
@@ -20,14 +19,14 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import timber.log.Timber;
+
 
 /**
  * Test driver to control the MJS cable with the USBSerial Library instead of the D2XX Library
  */
 
 public class MJSRadioDriver extends RadioDriver {
-    private static final String TAG = MJSRadioDriver.class.getSimpleName();
-    private static final boolean DEBUG = true;
     private static final String ACTION_USB_PERMISSION = "com.arksine.hdradiolib.USB_PERMISSION";
     private static final String ACTION_USB_DETACHED = "android.hardware.usb.action.USB_DEVICE_DETACHED";
     private final Object OPEN_LOCK = new Object();
@@ -95,12 +94,12 @@ public class MJSRadioDriver extends RadioDriver {
 
         for (UsbDevice uDevice : usbDeviceList.values()) {
             if ((uDevice.getVendorId() == 1027) && (uDevice.getProductId() == 37752)) {
-                Log.v(TAG, "MJS Gadgets HD Radio Cable found");
+                Timber.v("MJS Gadgets HD Radio Cable found");
                 hdDeviceList.add(listType.cast(uDevice));
             }
         }
         if (hdDeviceList.isEmpty()) {
-            Log.v(TAG, "MJS Gadgets HD Radio Cable not found");
+            Timber.v("MJS Gadgets HD Radio Cable not found");
         }
         return hdDeviceList;
     }
@@ -240,7 +239,7 @@ public class MJSRadioDriver extends RadioDriver {
                 }
 
                 if (!this.mUsbPermissonGranted) {
-                    Log.e(TAG, "Usb Permission not granted to device: " + device.getDeviceName());
+                    Timber.w("Usb Permission not granted to device: %s", device.getDeviceName());
                     // Dispatch On Opened Callback
 
                     return null;
@@ -255,7 +254,7 @@ public class MJSRadioDriver extends RadioDriver {
         public void run() {
             synchronized (OPEN_LOCK) {
                 if (MJSRadioDriver.this.isOpen()) {
-                    Log.i(TAG, "Radio already open");
+                    Timber.i("Radio already open");
                     // Dispatch On Opened Callback
                     // MJSRadioDriver.this.mDriverEvents.onOpened(true);
                     return;
@@ -298,7 +297,7 @@ public class MJSRadioDriver extends RadioDriver {
                         count++;
                     }
                     if (count == hdDeviceList.size() && usbConnection == null) {
-                        Log.e(TAG, "Unable to find Usb Device matching serial: " +
+                        Timber.e("Unable to find Usb Device matching serial: %s",
                                 this.mRequestedSerialNumber);
                     }
                 }
@@ -307,7 +306,7 @@ public class MJSRadioDriver extends RadioDriver {
 
                 // Didn't get a valid device connection
                 if (usbConnection == null) {
-                    Log.e(TAG, "Unable to open Usb connection");
+                    Timber.e("Unable to open Usb connection");
                     MJSRadioDriver.this.mDriverEvents.onOpened(false);
                     return;
                 }
@@ -329,7 +328,7 @@ public class MJSRadioDriver extends RadioDriver {
                         // Set the radio's Usb device
                         MJSRadioDriver.this.mUsbDevice = requestedDevice;
                         MJSRadioDriver.this.mSerialNumber = usbConnection.getSerial();
-                        Log.i(TAG, "Device Serial Number: " + mSerialNumber);
+                        Timber.d("Device Serial Number: %s", mSerialNumber);
 
                         // Register the Broadcast receiver to listen for Radio Disconnections
                         if (!MJSRadioDriver.this.mDisconnectReceiverRegistered) {
@@ -346,7 +345,7 @@ public class MJSRadioDriver extends RadioDriver {
                             try {
                                 Thread.sleep(2000);
                             } catch (InterruptedException e) {
-                                Log.w(TAG, e.getMessage());
+                                Timber.w(e);
                             }
                         }
 
@@ -357,7 +356,7 @@ public class MJSRadioDriver extends RadioDriver {
                         MJSRadioDriver.this.mDriverEvents.onOpened(false);
                     }
                 } else {
-                    Log.e(TAG, "Usb Device not a supported serial device");
+                    Timber.i("Usb Device not a supported serial device");
                     // Dispatch On Opened Callback
                     MJSRadioDriver.this.mDriverEvents.onOpened(false);
                 }

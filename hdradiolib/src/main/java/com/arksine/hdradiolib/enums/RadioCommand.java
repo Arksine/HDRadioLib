@@ -2,10 +2,11 @@ package com.arksine.hdradiolib.enums;
 
 import android.os.Parcel;
 import android.os.Parcelable;
-import android.util.Log;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+
+import timber.log.Timber;
 
 /**
  * Enumeration containing HD Radio commands, associated with their respective byte values
@@ -55,7 +56,6 @@ public enum RadioCommand implements Parcelable {
     COMPRESSION(new byte[]{(byte)0x06, (byte)0x04}, Type.INT), // TODO: need to test this, doesn't appear to retun an int
     RF_MODULATOR(new byte[]{(byte)0x01, (byte)0x05}, Type.BOOLEAN);  // TODO: This is actually INT / Boolean
 
-    private static final String TAG = RadioCommand.class.getSimpleName();
 
     // Cache an array of the command list
     private static final RadioCommand[] COMMAND_ARRAY = RadioCommand.values();
@@ -122,7 +122,7 @@ public enum RadioCommand implements Parcelable {
             }
         }
 
-        Log.i(TAG, "No matching Command found for value: " + byteValue);
+        Timber.i("No matching Command found for value: %#x", byteValue);
         return null;
     }
 

@@ -1,8 +1,5 @@
 package com.arksine.hdradiolib;
 
-import android.content.Context;
-import android.content.SharedPreferences;
-import android.preference.PreferenceManager;
 import android.util.SparseArray;
 
 import com.arksine.hdradiolib.enums.RadioBand;
@@ -16,8 +13,6 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 
 public class RadioValues {
-    private static final String TAG = RadioValues.class.getSimpleName();
-    private static final boolean DEBUG = HDRadio.DEBUG;
 
     // These don't need to be atomic since get/set only happen via the data handler
     private SparseArray<String> mHdTitles = new SparseArray<>(5);

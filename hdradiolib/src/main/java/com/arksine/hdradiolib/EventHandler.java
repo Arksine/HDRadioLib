@@ -12,7 +12,6 @@ import com.arksine.hdradiolib.enums.RadioError;
  */
 
 class EventHandler extends  Handler {
-    private static final String TAG = EventHandler.class.getSimpleName();
 
     private HDRadioEvents mCallbacks;
 

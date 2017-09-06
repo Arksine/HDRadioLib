@@ -5,14 +5,14 @@ import android.animation.AnimatorListenerAdapter;
 import android.animation.ObjectAnimator;
 import android.graphics.Paint;
 import android.os.Handler;
-import android.util.Log;
-import android.util.SparseArray;
 import android.view.Gravity;
 import android.view.ViewGroup;
 import android.view.animation.LinearInterpolator;
 import android.widget.TextView;
 
 import com.arksine.hdradiolib.enums.RadioCommand;
+
+import timber.log.Timber;
 
 // TODO: Have two modes, one for HD Radio/Regular RDS, and one for Streaming RDS.  Wouldn't be
 //       bad if the streaming RDS version parsed words between current and previous
@@ -23,8 +23,6 @@ import com.arksine.hdradiolib.enums.RadioCommand;
  */
 
 public class TextSwapAnimator {
-    private static final String TAG = TextSwapAnimator.class.getSimpleName();
-    private static final boolean DEBUG = true;
 
     private static final int DEFAULT_FADE_DURATION = 2000;  // 2 seconds
     private static final int DEFAULT_DELAY_AFTER_FADE = 0;
@@ -250,15 +248,14 @@ public class TextSwapAnimator {
                 item = mInfoItems[idx] + item;  // we append the item to the current string for program service
                 break;
             default:
-                Log.i(TAG, "Invalid Command Key");
+                Timber.i("Invalid Command Key");
                 return;
         }
 
         if (mInfoItems[idx].equals("") && !item.equals("")) {
             mCapacity++;
-            if (DEBUG) {
-                Log.d(TAG, "Current Animator Capacity: " + mCapacity);
-            }
+            Timber.d("Current Animator Capacity: %d", mCapacity);
+
         }
 
         mInfoItems[idx] = item;
@@ -274,7 +271,7 @@ public class TextSwapAnimator {
 
         switch (command) {
             case TUNE:
-                Log.i(TAG, "Frequency should not be cleared");
+                Timber.i("Frequency should not be cleared");
                 return;
             case HD_TITLE:
                 idx = 1;
@@ -295,7 +292,7 @@ public class TextSwapAnimator {
                 idx = 3;
                 break;
             default:
-                Log.i(TAG, "Invalid Command Key");
+                Timber.i("Invalid Command Key");
                 return;
         }
 
@@ -303,9 +300,8 @@ public class TextSwapAnimator {
             mInfoItems[idx] = "";
             mCapacity--;
 
-            if (DEBUG) {
-                Log.d(TAG, "Current Animator Capacity: " + mCapacity);
-            }
+            Timber.d("Current Animator Capacity: %d", mCapacity);
+
 
             if (mCapacity <= 1) {
                 stopAnimation();

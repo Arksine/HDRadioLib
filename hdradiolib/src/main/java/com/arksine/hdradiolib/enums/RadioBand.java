@@ -2,11 +2,12 @@ package com.arksine.hdradiolib.enums;
 
 import android.os.Parcel;
 import android.os.Parcelable;
-import android.util.Log;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.EnumSet;
+
+import timber.log.Timber;
 
 /**
  * Enumeration containing Radio Bands and their respective byte values.  Implements Parcelable
@@ -20,7 +21,6 @@ public enum RadioBand implements Parcelable {
     AM( new byte[]{(byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00}),
     FM( new byte[]{(byte)0x01, (byte)0x00, (byte)0x00, (byte)0x00});
 
-    private static final String TAG = RadioBand.class.getSimpleName();
     public static final Creator<RadioBand> CREATOR = new Creator<RadioBand>() {
         @Override
         public RadioBand createFromParcel(Parcel in) {
@@ -74,7 +74,7 @@ public enum RadioBand implements Parcelable {
             }
         }
 
-        Log.i(TAG, "No matching Band found for value: " + byteValue);
+        Timber.i("No matching Band found for value: %#x", byteValue);
         return null;
     }
 }

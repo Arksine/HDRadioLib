@@ -1,7 +1,6 @@
 package com.arksine.hdradiolib;
 
 import android.support.annotation.NonNull;
-import android.util.Log;
 
 import com.arksine.hdradiolib.enums.RadioBand;
 import com.arksine.hdradiolib.enums.RadioCommand;
@@ -12,13 +11,13 @@ import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
+import timber.log.Timber;
+
 /**
  * Created by Eric on 12/28/2016.
  */
 
 class RadioPacketBuilder {
-    private static final String TAG = RadioPacketBuilder.class.getSimpleName();
-    private static final boolean DEBUG = HDRadio.DEBUG;
 
     private RadioPacketBuilder() {}
 
@@ -41,7 +40,7 @@ class RadioPacketBuilder {
                 dataPacket = buildSetPacket(command, data);
                 break;
             default:
-                Log.i(TAG, "Invalid operation, must be get or set");
+                Timber.v("Invalid operation, must be get or set");
                 return null;
         }
 
@@ -109,8 +108,7 @@ class RadioPacketBuilder {
                 break;
         }
 
-        if (DEBUG)
-            Log.i(TAG, "Hex Bytes Sent:\n" + bytesToHexString(bufferOut.toByteArray()));
+        Timber.d("Hex Bytes Sent:\n%s", bytesToHexString(bufferOut.toByteArray()));
 
         return bufferOut.toByteArray();
     }
@@ -123,7 +121,7 @@ class RadioPacketBuilder {
         byte[] operationCode = RadioOperation.GET.getBytes();
 
         if (commandCode == null || operationCode == null) {
-            Log.w(TAG, "Invalid command or operation key, cannot build packet");
+            Timber.v("Invalid command or operation key, cannot build packet");
             return null;
         }
 
@@ -141,7 +139,7 @@ class RadioPacketBuilder {
         byte[] operationCode = RadioOperation.SET.getBytes();
 
         if (commandCode == null || operationCode == null) {
-            Log.w(TAG, "Invalid command or operation key, cannot build packet");
+            Timber.v("Invalid command or operation key, cannot build packet");
             return null;
         }
 
@@ -152,7 +150,7 @@ class RadioPacketBuilder {
             case POWER:           // set boolean item
             case MUTE:
                 if (!(data instanceof Boolean)) {
-                    Log.i(TAG, "Invalid boolean data received for command: " + command);
+                    Timber.i("Invalid boolean data received for command: %s", command.toString());
                     return null;
                 }
 
@@ -187,14 +185,13 @@ class RadioPacketBuilder {
                 }*/
             case HD_SUBCHANNEL:
                 if (!(data instanceof Integer)) {
-                    Log.i(TAG, "Invalid integer data received for command: " + command);
+                    Timber.i("Invalid integer data received for command: %s", command.toString());
                     return null;
                 }
 
                 int val = (int) data;
 
-                if (DEBUG)
-                    Log.v(TAG, "Setting value for " + command + ": " + val);
+                Timber.d("Setting value for %s: %d", command.toString(), val);
 
                 // Check to see if integer value is outside of range
                 if (val > 90) {
@@ -214,7 +211,7 @@ class RadioPacketBuilder {
                     // Command is to tune up or down
                     RadioConstant direction = (RadioConstant)data;
                     if (!(direction == RadioConstant.UP || direction == RadioConstant.DOWN)) {
-                        Log.i(TAG, "Direction is not valid for tune command");
+                        Timber.v("Direction is not valid for tune command");
                         return null;
                     }
                     dataBuf.put(RadioConstant.ZERO.getBytes());     // pad with 8 zero bytes
@@ -226,7 +223,7 @@ class RadioPacketBuilder {
                     TuneInfo info = (TuneInfo)data;
                     byte[] bandBytes = info.getBand().getBytes();
                     if (bandBytes == null) {
-                        Log.i(TAG, "Band is not valid for tune command");
+                        Timber.v("Band is not valid for tune command");
                         return null;
                     }
                     dataBuf.put(bandBytes);
@@ -235,7 +232,7 @@ class RadioPacketBuilder {
 
                 } else {
                     // The data is incorrect
-                    Log.i(TAG, "Data is not valid for tune command");
+                    Timber.v("Data is not valid for tune command");
                     return null;
                 }
 
@@ -243,7 +240,7 @@ class RadioPacketBuilder {
             case SEEK:
                 if (!(data instanceof SeekData)) {
                     // Seek must be a constant, up or down
-                    Log.i(TAG, "Invalid data received for command: " + command);
+                    Timber.v("Invalid data received for command: %s", command.toString());
                     return null;
                 }
 
@@ -251,7 +248,7 @@ class RadioPacketBuilder {
                 RadioConstant seekDir = seekData.getDirection();
                 if (!(seekDir == RadioConstant.UP ||
                         seekDir == RadioConstant.DOWN)) {
-                    Log.i(TAG, "Direction is not valid for tune command");
+                    Timber.v("Direction is not valid for tune command");
                     return null;
                 }
                 dataBuf.put(seekData.getBand().getBytes());  // Band Bytes (The HD Radio app uses SEEK_REQ_ID), the real controller uses band
@@ -270,7 +267,7 @@ class RadioPacketBuilder {
             case RF_MODULATOR: {
                 // TODO: currently only setting to OFF.  Add functionality to turn on in the future
                 if (!(data instanceof  Integer)) {
-                    Log.i(TAG, "Invalid data received for command: " + command);
+                    Timber.v("Invalid data received for command: %s", command.toString());
                     return null;
                 }
                 dataBuf.put(RadioConstant.ZERO.getBytes());
@@ -278,7 +275,7 @@ class RadioPacketBuilder {
                 break;
             }
             default:
-                Log.i(TAG, "Invalid command, cannot set: " + command);
+                Timber.i("Invalid command, cannot set: %s", command);
                 return null;
         }
 

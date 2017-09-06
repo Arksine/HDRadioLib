@@ -1,10 +1,8 @@
 package com.arksine.hdradiolib.enums;
 
-import android.util.Log;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.util.EnumSet;
 
 /**
  * Enumeration containing HD Radio Constants and their respective byte values
@@ -17,8 +15,6 @@ public enum RadioConstant {
     ZERO(new byte[]{(byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00}),
     SEEK_REQUEST(new byte[]{(byte)0xA5, (byte)0x00, (byte)0x00, (byte)0x00});
 
-
-    private static final String TAG = RadioConstant.class.getSimpleName();
     private final byte[] bytes;
 
     RadioConstant (byte[] inBytes) {

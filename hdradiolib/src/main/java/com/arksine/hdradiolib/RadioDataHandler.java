@@ -4,7 +4,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.support.annotation.NonNull;
-import android.util.Log;
 
 import com.arksine.hdradiolib.enums.RadioBand;
 import com.arksine.hdradiolib.enums.RadioCommand;
@@ -13,13 +12,13 @@ import com.arksine.hdradiolib.enums.RadioOperation;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
+import timber.log.Timber;
+
 /**
  * Receives bytes of data from the HD Radio and parses it.
  */
 
 public class RadioDataHandler extends Handler {
-    private static final String TAG = RadioDataHandler.class.getSimpleName();
-    private static final boolean DEBUG = HDRadio.DEBUG;
 
 
     // Packet parsing vars
@@ -61,8 +60,8 @@ public class RadioDataHandler extends Handler {
     }
 
     private void parseIncomingBytes(byte[] incomingBytes) {
-        if (DEBUG)
-            Log.v(TAG, "Incoming Radio Bytes:\n" + RadioPacketBuilder.bytesToHexString(incomingBytes));
+
+         Timber.d("Incoming Radio Bytes:\n%s", RadioPacketBuilder.bytesToHexString(incomingBytes));
 
         /**
          * The following is known the following about radio packets:
@@ -80,7 +79,7 @@ public class RadioDataHandler extends Handler {
                 // Header received, start new packet
 
                 if (this.mPacketStarted) {
-                    Log.v(TAG, "New header received during previous packet, discarding current packet");
+                    Timber.v("New header received during previous packet, discarding current packet");
                 }
 
                 // Start byte is received and it isn't the length byte or the checksum
@@ -91,15 +90,14 @@ public class RadioDataHandler extends Handler {
                 this.mPacketCheckSum = (b & 0xFF);
                 this.mIsEscaped = false;   // just in case a header is read directly after escape byte
             } else if (!this.mPacketStarted) {
-                Log.v(TAG, "Byte received without a start header, discarding");
+                Timber.v("Byte received without a start header, discarding");
             } else if (b == (byte) 0x1B && !this.mIsEscaped) {
                 // Escape byte received
                 this.mIsEscaped = true;
             } else {
 
                 if (this.mIsEscaped) {
-                    if (DEBUG)
-                        Log.v(TAG, "Escaped char: " + String.format("%02X", b));
+                    Timber.d("Escaped char: %#x", b);
 
                     if (b == (byte) 0x48) {
                         // 0x48 is escaped as 0xA4
@@ -117,7 +115,7 @@ public class RadioDataHandler extends Handler {
 
                     if (this.mPacketLength == 0) {
                         // Received a header with an empty packet, not sure what to do
-                        Log.wtf(TAG, "Packet length received is zero, discard packet");
+                        Timber.wtf("Packet length received is zero, discard packet");
                         this.mPacketStarted = false;
                     }
                 } else if (this.mDataBuffer.position() == this.mPacketLength) {
@@ -131,7 +129,7 @@ public class RadioDataHandler extends Handler {
                         this.mDataBuffer.get(data);
                         this.processRadioPacket(data);
                     } else {
-                        Log.v(TAG, "Invalid checksum, discarding packet");
+                        Timber.v("Invalid checksum, discarding packet");
                     }
 
                     // set packet to false so stray bytes that are no 0xA4 are discarded
@@ -154,8 +152,7 @@ public class RadioDataHandler extends Handler {
          * - Packets received from the radio should always be replies
          */
 
-        if (DEBUG)
-            Log.v(TAG, "Data packet hex:\n" + RadioPacketBuilder.bytesToHexString(radioPacket));
+        Timber.v("Data packet hex:\n%s", RadioPacketBuilder.bytesToHexString(radioPacket));
 
         ByteBuffer msgBuf = ByteBuffer.wrap(radioPacket);
         msgBuf.order(ByteOrder.LITTLE_ENDIAN);
@@ -163,23 +160,22 @@ public class RadioDataHandler extends Handler {
         int messageOp = msgBuf.getShort();
 
         if (messageOp != RadioOperation.REPLY.getByteValueAsInt()) {
-            Log.i(TAG, "Message is not a reply, discarding");
+            Timber.v("Message is not a reply, discarding");
             return;
         }
 
         RadioCommand command = RadioCommand.getCommandFromValue(messageCmd);
         if (command == null) {
-            Log.w(TAG, "Unknown command, cannot process packet");
+            Timber.i("Unknown command, cannot process packet");
             return;
         }
 
         if (msgBuf.remaining() < 4) {
-            Log.e(TAG, "Error, not enough bytes in buffer");
+            Timber.w("Error, not enough bytes in buffer");
             return;
         }
 
-        if (DEBUG)
-            Log.d(TAG, "Received Command: " + command.toString());
+        Timber.d("Received Command: %s", command.toString());
 
         switch (command) {
             case POWER: {
@@ -362,11 +358,11 @@ public class RadioDataHandler extends Handler {
                 break;
             }
             default:
-                Log.i(TAG, "Invalid Command");
+                Timber.i("Invalid Command: %s", command);
         }
 
         if (msgBuf.remaining() > 0) {
-            Log.w(TAG, "Remaining bytes in Data packet after parsing");
+            Timber.v("Remaining bytes in Data packet after parsing");
         }
 
     }
@@ -374,8 +370,7 @@ public class RadioDataHandler extends Handler {
     private int parseInteger(ByteBuffer msgBuffer) {
         int value = msgBuffer.getInt();
 
-        if (DEBUG)
-            Log.d(TAG, "Value: " + value);
+        Timber.d("Value: %s", value);
         return value;
     }
 
@@ -388,12 +383,11 @@ public class RadioDataHandler extends Handler {
         } else if (boolValue == 0) {
             status = false;
         } else {
-            Log.i(TAG, "Invalid boolean value: " + boolValue);
+            Timber.d("Invalid boolean value: %b", boolValue);
             return null;
         }
 
-        if (DEBUG)
-            Log.d(TAG, "Value: " + status);
+        Timber.d("Value: %b", status);
 
         return status;
     }
@@ -403,7 +397,7 @@ public class RadioDataHandler extends Handler {
         int strLength = msgBuffer.getInt();
 
         if (strLength != msgBuffer.remaining()) {
-            Log.i(TAG, "String Length received does not match remaining bytes in buffer");
+            Timber.v("String Length received does not match remaining bytes in buffer");
             strLength = msgBuffer.remaining();
         }
 
@@ -417,8 +411,7 @@ public class RadioDataHandler extends Handler {
             strMsg = new String(stringBytes);
         }
 
-        if (DEBUG)
-            Log.d(TAG, "Length: " + strLength + "\nConverted String: \n" + strMsg);
+        Timber.d("Length: %s \nConverted String: \n%s", strLength, strMsg);
 
         return strMsg;
     }
@@ -431,14 +424,16 @@ public class RadioDataHandler extends Handler {
         } else if (bandValue == 1) {
             band = RadioBand.FM;
         } else {
-            Log.wtf(TAG, "Invalid value recieved for band: " + bandValue);
+            Timber.wtf("Invalid value recieved for band: %d", bandValue);
             return null;
         }
 
         int freqency = msgBuffer.getInt();    // Get frequency bytes
 
-        if (DEBUG)
-            Log.d(TAG, "Value: " + freqency + " " + band.toString());
+        Timber.d("Value: %d %s ", freqency, band.toString());
+
+        // TODO: There are another 4 bytes for tune, 8 for seek (all zeroes in test cases) remaining in buffer,
+        // DO something with them?  Are they the subchannel?
 
         return new TuneInfo(band, freqency, 0);
     }
@@ -448,7 +443,7 @@ public class RadioDataHandler extends Handler {
         int infoLength = msgBuffer.getInt();
 
         if (infoLength != msgBuffer.remaining()) {
-            Log.w(TAG, "String Length received does not match remaining bytes in buffer");
+            Timber.v("String Length received does not match remaining bytes in buffer");
             infoLength = msgBuffer.remaining();
         }
 
@@ -462,8 +457,7 @@ public class RadioDataHandler extends Handler {
             songInfo = new String(stringBytes);
         }
 
-        if (DEBUG)
-            Log.d(TAG, "Subchannel: " + subch + " String: " + songInfo);
+        Timber.d("Subchannel: %d Info: %s", subch, songInfo);
 
         return new HDSongInfo(songInfo, subch);
     }

@@ -7,7 +7,6 @@ import android.os.Looper;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.DisplayMetrics;
-import android.util.Log;
 import android.view.View;
 import android.view.ViewTreeObserver;
 import android.widget.Button;
@@ -17,11 +16,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ToggleButton;
 
-import com.arksine.hdradiolib.HDRadio;
-import com.arksine.hdradiolib.HDRadioEvents;
-import com.arksine.hdradiolib.HDSongInfo;
-import com.arksine.hdradiolib.RadioController;
-import com.arksine.hdradiolib.TuneInfo;
+import com.arksine.hdradiolib.*;
+import com.arksine.hdradiolib.BuildConfig;
 import com.arksine.hdradiolib.enums.RadioBand;
 import com.arksine.hdradiolib.enums.RadioCommand;
 import com.arksine.hdradiolib.enums.RadioError;
@@ -31,8 +27,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import timber.log.Timber;
+
 public class RadioActivity extends AppCompatActivity {
-    private static final String TAG = RadioActivity.class.getSimpleName();
 
     // Change this to test different drivers
     private static final HDRadio.DriverType DRIVER = HDRadio.DriverType.ARDUINO_DRIVER;
@@ -72,6 +69,10 @@ public class RadioActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_radio);
+
+        if (BuildConfig.DEBUG) {
+            Timber.plant(new Timber.DebugTree());
+        }
 
         buildRadioInstance();
         mUiHandler = new Handler(Looper.getMainLooper());
@@ -141,7 +142,7 @@ public class RadioActivity extends AppCompatActivity {
                 } else {
                     // Check the serial number
                     String id = mHdRadio.getDeviceId();
-                    Log.i(TAG, "Radio Opened successfully, device id: " + id);
+                    Timber.i("Radio Opened successfully, device id: %s", id);
 
                     // Get the controller interface
                     mController = controller;
@@ -496,7 +497,7 @@ public class RadioActivity extends AppCompatActivity {
 
                     final boolean status = ((ToggleButton)view).isChecked();
 
-                    Log.d(TAG, "Set power: " + status);
+                    Timber.d("Set power: %b", status);
                     if (status) {
                         mController.powerOn();
                     } else {
@@ -512,7 +513,7 @@ public class RadioActivity extends AppCompatActivity {
                 if (mController != null) {
                     final boolean status = ((ToggleButton)view).isChecked();
 
-                    Log.d(TAG, "Set mute: " + status);
+                    Timber.d("Set mute:  %b", status);
                     if (status) {
                         mController.muteOn();
                     } else {
@@ -540,7 +541,7 @@ public class RadioActivity extends AppCompatActivity {
                     // If toggle is checked we switch to FM, otherwise AM
                     RadioBand band = ((ToggleButton) view).isChecked() ?
                             RadioBand.FM : RadioBand.AM;
-                    Log.d(TAG, "Switch Band to: " + band.toString());
+                    Timber.d("Switch Band to: %s", band.toString());
 
                     if (band == RadioBand.FM) {
                         // FM
@@ -679,7 +680,7 @@ public class RadioActivity extends AppCompatActivity {
                 public void onGlobalLayout() {
                     infoScrollView.getViewTreeObserver().removeOnGlobalLayoutListener(this);
                     mTextSwapAnimator.setScrollViewWidth(infoScrollView.getWidth());
-                    Log.v(TAG, "View Tree Observer set scrollview width to : " +
+                    Timber.v("View Tree Observer set scrollview width to : %d",
                             infoScrollView.getWidth());
                 }
             });
@@ -690,7 +691,7 @@ public class RadioActivity extends AppCompatActivity {
             int padding = Math.round(2 * getResources().getDimension(R.dimen.activity_horizontal_margin));
             int scrollViewWidth = displayMetrics.widthPixels - padding;
             mTextSwapAnimator.setScrollViewWidth(scrollViewWidth);
-            Log.v(TAG, "Display Metrics set width to:  " + scrollViewWidth);
+            Timber.v("Display Metrics set width to:  %d", scrollViewWidth);
         }
     }
 

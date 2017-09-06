@@ -1,10 +1,10 @@
 package com.arksine.hdradiolib.enums;
 
-import android.util.Log;
-
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.EnumSet;
+
+import timber.log.Timber;
 
 /**
  *  Enumeration containing valid HD Radio operations, and their respective byte values
@@ -15,7 +15,6 @@ public enum RadioOperation {
     GET(new byte[]{(byte)0x01, (byte)0x00}),
     REPLY(new byte[]{(byte)0x02, (byte)0x00});
 
-    private static final String TAG = RadioOperation.class.getSimpleName();
     private final byte[] bytes;
 
     RadioOperation (byte[] inBytes) {
@@ -47,7 +46,7 @@ public enum RadioOperation {
             }
         }
 
-        Log.i(TAG, "No matching Operation found for value: " + byteValue);
+        Timber.i("No matching Operation found for value: %#x", byteValue);
         return null;
     }
 }
